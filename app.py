@@ -3,7 +3,7 @@ from groq import Groq
 import google.generativeai as genai
 import tempfile
 import os
-from pydub import AudioSegment
+import subprocess
 
 st.set_page_config(page_title="Myanmar Subtitle AI", page_icon="🎬", layout="centered")
 
@@ -28,21 +28,27 @@ if uploaded_file:
         if st.button("🚀 Subtitle ထုတ်ပြီး ဘာသာပြန်မည်"):
             with st.spinner("ဖိုင်ကို Processing လုပ်နေပါသည်။ ခေတ္တစောင့်ပါ..."):
                 
-                # ယာယီ ဖိုင်သိမ်းခြင်း
                 file_ext = os.path.splitext(uploaded_file.name)[1].lower()
                 with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
                     tmp_file.write(uploaded_file.read())
                     tmp_file_path = tmp_file.name
 
                 audio_path = tmp_file_path
+                compressed_audio_path = None
 
                 try:
-                    # ဖိုင်ဆိုဒ် 24MB ထက်ကြီးပါက အသံဖိုင်အဖြစ် သီးသန့်ပြောင်းပြီး ဖိုင်ဆိုဒ်ချုံ့ခြင်း
+                    # ဖိုင်ဆိုဒ် 24MB ထက်ကြီးပါက ffmpeg ဖြင့် mp3 သို့ တိုက်ရိုက်ပြောင်းပြီး ချုံ့ခြင်း
                     if os.path.getsize(tmp_file_path) > 24 * 1024 * 1024:
                         st.info("ဖိုင်ဆိုဒ်ကြီးသောကြောင့် အသံဖိုင်အဖြစ် ပြောင်းလဲချုံ့နေပါသည်...")
-                        audio = AudioSegment.from_file(tmp_file_path)
                         compressed_audio_path = tmp_file_path + "_compressed.mp3"
-                        audio.export(compressed_audio_path, format="mp3", bitrate="64k")
+                        
+                        # ffmpeg command ဖြင့် audio ခွဲထုတ်ခြင်း
+                        cmd = [
+                            "ffmpeg", "-y", "-i", tmp_file_path,
+                            "-vn", "-acodec", "libmp3lame", "-b:a", "64k",
+                            compressed_audio_path
+                        ]
+                        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         audio_path = compressed_audio_path
 
                     # ၁။ Groq Whisper API ဖြင့် Subtitle (SRT) ထုတ်ယူခြင်း
@@ -93,8 +99,7 @@ if uploaded_file:
                     st.error(f"Error ဖြစ်ပွားပါသည်: {str(e)}")
                 
                 finally:
-                    # ယာယီဖိုင်များ ပြန်ဖျက်ခြင်း
                     if os.path.exists(tmp_file_path):
                         os.remove(tmp_file_path)
-                    if 'compressed_audio_path' in locals() and os.path.exists(compressed_audio_path):
+                    if compressed_audio_path and os.path.exists(compressed_audio_path):
                         os.remove(compressed_audio_path)
