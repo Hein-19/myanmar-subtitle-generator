@@ -42,8 +42,8 @@ def json_to_srt(segments):
 
 # Gemini REST API ဖြင့် တိုက်ရိုက် ဘာသာပြန်ပေးသည့် Function
 def translate_with_gemini(api_key, srt_content):
-    # အလုပ်လုပ်နိုင်သော Gemini Models များကို အစဉ်လိုက် စမ်းသပ်ခြင်း
-    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    # အလုပ်လုပ်နိုင်သော Gemini Flash Models များကို စမ်းသပ်ခြင်း
+    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest"]
     
     prompt = f"""You are a professional subtitle translator. 
 Translate the following SRT content into natural and fluent Burmese (Myanmar language).
@@ -58,7 +58,7 @@ SRT Content:
 
     last_error = ""
     for model_name in models_to_try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key.strip()}"
+        url = f"https://generativelanguage.googleapis.com/v1/models/{model_name}:generateContent?key={api_key.strip()}"
         headers = {'Content-Type': 'application/json'}
         payload = {
             "contents": [{
