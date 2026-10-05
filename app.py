@@ -1,6 +1,7 @@
 import streamlit as st
 from groq import Groq
-import google.generativeai as genai
+import requests
+import json
 import tempfile
 import os
 import subprocess
@@ -38,6 +39,47 @@ def json_to_srt(segments):
         text = text_val.strip()
         srt_output += f"{idx}\n{start_time} --> {end_time}\n{text}\n\n"
     return srt_output
+
+# Gemini REST API ဖြင့် တိုက်ရိုက် ဘာသာပြန်ပေးသည့် Function
+def translate_with_gemini(api_key, srt_content):
+    # အလုပ်လုပ်နိုင်သော Gemini Models များကို အစဉ်လိုက် စမ်းသပ်ခြင်း
+    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    
+    prompt = f"""You are a professional subtitle translator. 
+Translate the following SRT content into natural and fluent Burmese (Myanmar language).
+
+STRICT RULES:
+1. Keep the SRT structure, sequence numbers, and timecodes EXACTLY the same.
+2. Only translate the text lines, do not alter timestamps.
+3. Use natural spoken Burmese suitable for movie subtitles.
+
+SRT Content:
+{srt_content}"""
+
+    last_error = ""
+    for model_name in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key.strip()}"
+        headers = {'Content-Type': 'application/json'}
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        }
+        
+        response = requests.post(url, headers=headers, json=payload)
+        res_json = response.json()
+        
+        if response.status_code == 200:
+            try:
+                translated_text = res_json['candidates'][0]['content']['parts'][0]['text']
+                return translated_text
+            except Exception as parse_err:
+                last_error = f"Response Parsing Error: {str(parse_err)}"
+        else:
+            err_msg = res_json.get('error', {}).get('message', 'Unknown Error')
+            last_error = f"Model {model_name} failed: {err_msg}"
+            
+    raise Exception(f"Gemini API အသုံးပြု၍မရပါ: {last_error}")
 
 # Sidebar - API Keys Setup
 st.sidebar.header("🔑 API Keys")
@@ -92,31 +134,9 @@ if uploaded_file:
                         st.error(f"❌ Groq API Error: {str(groq_err)}")
                         st.stop()
                     
-                    # ၂။ Gemini API ဖြင့် မြန်မာလို ဘာသာပြန်ခြင်း
+                    # ၂။ Gemini API (REST) ဖြင့် ဘာသာပြန်ခြင်း
                     try:
-                        genai.configure(api_key=gemini_api_key.strip())
-                        
-                        # Model နာမည်ကို အမှန်တကယ့် အလုပ်လုပ်သည့် Model သို့ ပြောင်းလဲထားပါသည်
-                        try:
-                            gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-                        except:
-                            gemini_model = genai.GenerativeModel('models/gemini-1.5-flash')
-                        
-                        prompt = f"""
-                        You are a professional subtitle translator. 
-                        Translate the following SRT content into natural and fluent Burmese (Myanmar language).
-                        
-                        STRICT RULES:
-                        1. Keep the SRT structure, sequence numbers, and timecodes EXACTLY the same.
-                        2. Only translate the text lines, do not alter timestamps.
-                        3. Use natural spoken Burmese suitable for movie subtitles.
-                        
-                        SRT Content:
-                        {raw_srt}
-                        """
-                        
-                        response = gemini_model.generate_content(prompt)
-                        translated_srt = response.text
+                        translated_srt = translate_with_gemini(gemini_api_key, raw_srt)
                     except Exception as gemini_err:
                         st.error(f"❌ Gemini API Error: {str(gemini_err)}")
                         st.stop()
