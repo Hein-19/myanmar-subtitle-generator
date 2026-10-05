@@ -4,6 +4,7 @@ import google.generativeai as genai
 import tempfile
 import os
 import subprocess
+from datetime import timedelta
 
 st.set_page_config(page_title="Myanmar Subtitle AI", page_icon="🎬", layout="centered")
 
@@ -13,6 +14,26 @@ st.markdown("""
 
 st.title("🎬 Myanmar Subtitle Generator & Translator")
 st.write("Groq (Whisper) နှင့် Gemini AI သုံးပြီး Subtitle (.srt) ချက်ချင်းထုတ်ယူမည်")
+
+# Timestamp ကို SRT format (00:00:00,000) သို့ ပြောင်းပေးသည့် Function
+def format_timestamp(seconds):
+    td = timedelta(seconds=seconds)
+    total_seconds = int(td.total_seconds())
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    secs = total_seconds % 60
+    millisecs = int((td.total_seconds() - total_seconds) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millisecs:03d}"
+
+# Verbose JSON မှ SRT စာသားပြောင်းပေးသည့် Function
+def json_to_srt(segments):
+    srt_output = ""
+    for idx, segment in enumerate(segments, start=1):
+        start_time = format_timestamp(segment.get('start', 0))
+        end_time = format_timestamp(segment.get('end', 0))
+        text = segment.get('text', '').strip()
+        srt_output += f"{idx}\n{start_time} --> {end_time}\n{text}\n\n"
+    return srt_output
 
 # Sidebar - API Keys Setup
 st.sidebar.header("🔑 API Keys")
@@ -42,7 +63,6 @@ if uploaded_file:
                         st.info("ဖိုင်ဆိုဒ်ကြီးသောကြောင့် အသံဖိုင်အဖြစ် ပြောင်းလဲချုံ့နေပါသည်...")
                         compressed_audio_path = tmp_file_path + "_compressed.mp3"
                         
-                        # ffmpeg command ဖြင့် audio ခွဲထုတ်ခြင်း
                         cmd = [
                             "ffmpeg", "-y", "-i", tmp_file_path,
                             "-vn", "-acodec", "libmp3lame", "-b:a", "64k",
@@ -51,36 +71,47 @@ if uploaded_file:
                         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         audio_path = compressed_audio_path
 
-                    # ၁။ Groq Whisper API ဖြင့် Subtitle (SRT) ထုတ်ယူခြင်း
-                    groq_client = Groq(api_key=groq_api_key)
-                    with open(audio_path, "rb") as file:
-                        transcription = groq_client.audio.transcriptions.create(
-                            file=(audio_path, file.read()),
-                            model="whisper-large-v3",
-                            response_format="srt"
-                        )
-                    
-                    raw_srt = transcription
+                    # ၁။ Groq Whisper API ဖြင့် verbose_json တောင်းယူခြင်း
+                    try:
+                        groq_client = Groq(api_key=groq_api_key.strip())
+                        with open(audio_path, "rb") as file:
+                            transcription = groq_client.audio.transcriptions.create(
+                                file=(audio_path, file.read()),
+                                model="whisper-large-v3",
+                                response_format="verbose_json"
+                            )
+                        
+                        # JSON ကို SRT သို့ ပြောင်းခြင်း
+                        segments = transcription.segments if hasattr(transcription, 'segments') else transcription.get('segments', [])
+                        raw_srt = json_to_srt(segments)
+
+                    except Exception as groq_err:
+                        st.error(f"❌ Groq API Error: {str(groq_err)}")
+                        st.stop()
                     
                     # ၂။ Gemini API ဖြင့် မြန်မာလို ဘာသာပြန်ခြင်း
-                    genai.configure(api_key=gemini_api_key)
-                    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-                    
-                    prompt = f"""
-                    You are a professional subtitle translator. 
-                    Translate the following SRT content into natural and fluent Burmese (Myanmar language).
-                    
-                    STRICT RULES:
-                    1. Keep the SRT structure, sequence numbers, and timecodes EXACTLY the same.
-                    2. Only translate the text lines, do not alter timestamps.
-                    3. Use natural spoken Burmese suitable for movie subtitles.
-                    
-                    SRT Content:
-                    {raw_srt}
-                    """
-                    
-                    response = gemini_model.generate_content(prompt)
-                    translated_srt = response.text
+                    try:
+                        genai.configure(api_key=gemini_api_key.strip())
+                        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+                        
+                        prompt = f"""
+                        You are a professional subtitle translator. 
+                        Translate the following SRT content into natural and fluent Burmese (Myanmar language).
+                        
+                        STRICT RULES:
+                        1. Keep the SRT structure, sequence numbers, and timecodes EXACTLY the same.
+                        2. Only translate the text lines, do not alter timestamps.
+                        3. Use natural spoken Burmese suitable for movie subtitles.
+                        
+                        SRT Content:
+                        {raw_srt}
+                        """
+                        
+                        response = gemini_model.generate_content(prompt)
+                        translated_srt = response.text
+                    except Exception as gemini_err:
+                        st.error(f"❌ Gemini API Error: {str(gemini_err)}")
+                        st.stop()
 
                     # ရလဒ်ပြသခြင်း
                     st.success("🎉 ဘာသာပြန်ခြင်း အောင်မြင်ပါသည်!")
