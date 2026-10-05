@@ -40,11 +40,27 @@ def json_to_srt(segments):
         srt_output += f"{idx}\n{start_time} --> {end_time}\n{text}\n\n"
     return srt_output
 
-# Gemini REST API ဖြင့် တိုက်ရိုက် ဘာသာပြန်ပေးသည့် Function
+# Gemini REST API ဖြင့် အဆင်ပြေသည့် Model ကို အလိုအလျောက် ရှာဖွေ ဘာသာပြန်ပေးသည့် Function
 def translate_with_gemini(api_key, srt_content):
-    # အလုပ်လုပ်နိုင်သော Gemini Flash Models များကို စမ်းသပ်ခြင်း
-    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest"]
+    api_key = api_key.strip()
     
+    # ၁။ API Key ထဲမှာ လက်ရှိ သုံးလို့ရတဲ့ Model စာရင်းကို Google စနစ်ထံ တောင်းယူခြင်း
+    list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    res = requests.get(list_url)
+    
+    working_model = "gemini-2.5-flash" # Default Fallback
+    
+    if res.status_code == 200:
+        models_data = res.json().get('models', [])
+        # generateContent ရတဲ့ flash model များကို သီးသန့် ရှာဖွေခြင်း
+        available_flash_models = [
+            m['name'].replace('models/', '') 
+            for m in models_data 
+            if 'generateContent' in m.get('supportedGenerationMethods', []) and 'flash' in m['name']
+        ]
+        if available_flash_models:
+            working_model = available_flash_models[0]
+            
     prompt = f"""You are a professional subtitle translator. 
 Translate the following SRT content into natural and fluent Burmese (Myanmar language).
 
@@ -56,30 +72,27 @@ STRICT RULES:
 SRT Content:
 {srt_content}"""
 
-    last_error = ""
-    for model_name in models_to_try:
-        url = f"https://generativelanguage.googleapis.com/v1/models/{model_name}:generateContent?key={api_key.strip()}"
-        headers = {'Content-Type': 'application/json'}
-        payload = {
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }]
-        }
-        
-        response = requests.post(url, headers=headers, json=payload)
-        res_json = response.json()
-        
-        if response.status_code == 200:
-            try:
-                translated_text = res_json['candidates'][0]['content']['parts'][0]['text']
-                return translated_text
-            except Exception as parse_err:
-                last_error = f"Response Parsing Error: {str(parse_err)}"
-        else:
-            err_msg = res_json.get('error', {}).get('message', 'Unknown Error')
-            last_error = f"Model {model_name} failed: {err_msg}"
-            
-    raise Exception(f"Gemini API အသုံးပြု၍မရပါ: {last_error}")
+    # ၂။ ရရှိလာသော Model ဖြင့် ဘာသာပြန်ခြင်း ပြုလုပ်ခြင်း
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{working_model}:generateContent?key={api_key}"
+    headers = {'Content-Type': 'application/json'}
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
+    
+    response = requests.post(url, headers=headers, json=payload)
+    res_json = response.json()
+    
+    if response.status_code == 200:
+        try:
+            translated_text = res_json['candidates'][0]['content']['parts'][0]['text']
+            return translated_text
+        except Exception as parse_err:
+            raise Exception(f"Response Parsing Error: {str(parse_err)}")
+    else:
+        err_msg = res_json.get('error', {}).get('message', 'Unknown Error')
+        raise Exception(f"Model ({working_model}) Error: {err_msg}")
 
 # Sidebar - API Keys Setup
 st.sidebar.header("🔑 API Keys")
@@ -134,7 +147,7 @@ if uploaded_file:
                         st.error(f"❌ Groq API Error: {str(groq_err)}")
                         st.stop()
                     
-                    # ၂။ Gemini API (REST) ဖြင့် ဘာသာပြန်ခြင်း
+                    # ၂။ Gemini API (Dynamic Model Check) ဖြင့် ဘာသာပြန်ခြင်း
                     try:
                         translated_srt = translate_with_gemini(gemini_api_key, raw_srt)
                     except Exception as gemini_err:
