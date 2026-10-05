@@ -15,7 +15,7 @@ st.markdown("""
 st.title("🎬 Myanmar Subtitle Generator & Translator")
 st.write("Groq (Whisper) နှင့် Gemini AI သုံးပြီး Subtitle (.srt) ချက်ချင်းထုတ်ယူမည်")
 
-# Timestamp ကို SRT format (00:00:00,000) သို့ ပြောင်းပေးသည့် Function
+# Timestamp ကို SRT format သို့ ပြောင်းပေးသည့် Function
 def format_timestamp(seconds):
     td = timedelta(seconds=seconds)
     total_seconds = int(td.total_seconds())
@@ -29,9 +29,13 @@ def format_timestamp(seconds):
 def json_to_srt(segments):
     srt_output = ""
     for idx, segment in enumerate(segments, start=1):
-        start_time = format_timestamp(segment.get('start', 0))
-        end_time = format_timestamp(segment.get('end', 0))
-        text = segment.get('text', '').strip()
+        start_val = segment.get('start', 0) if isinstance(segment, dict) else getattr(segment, 'start', 0)
+        end_val = segment.get('end', 0) if isinstance(segment, dict) else getattr(segment, 'end', 0)
+        text_val = segment.get('text', '') if isinstance(segment, dict) else getattr(segment, 'text', '')
+        
+        start_time = format_timestamp(start_val)
+        end_time = format_timestamp(end_val)
+        text = text_val.strip()
         srt_output += f"{idx}\n{start_time} --> {end_time}\n{text}\n\n"
     return srt_output
 
@@ -81,7 +85,6 @@ if uploaded_file:
                                 response_format="verbose_json"
                             )
                         
-                        # JSON ကို SRT သို့ ပြောင်းခြင်း
                         segments = transcription.segments if hasattr(transcription, 'segments') else transcription.get('segments', [])
                         raw_srt = json_to_srt(segments)
 
@@ -92,7 +95,12 @@ if uploaded_file:
                     # ၂။ Gemini API ဖြင့် မြန်မာလို ဘာသာပြန်ခြင်း
                     try:
                         genai.configure(api_key=gemini_api_key.strip())
-                        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+                        
+                        # Model နာမည်ကို အမှန်တကယ့် အလုပ်လုပ်သည့် Model သို့ ပြောင်းလဲထားပါသည်
+                        try:
+                            gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+                        except:
+                            gemini_model = genai.GenerativeModel('models/gemini-1.5-flash')
                         
                         prompt = f"""
                         You are a professional subtitle translator. 
