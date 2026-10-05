@@ -3,10 +3,10 @@ from groq import Groq
 import google.generativeai as genai
 import tempfile
 import os
+from pydub import AudioSegment
 
 st.set_page_config(page_title="Myanmar Subtitle AI", page_icon="🎬", layout="centered")
 
-# UI Styling
 st.markdown("""
     
 """, unsafe_allow_html=True)
@@ -19,9 +19,6 @@ st.sidebar.header("🔑 API Keys")
 groq_api_key = st.sidebar.text_input("Groq API Key", type="password")
 gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password")
 
-st.sidebar.markdown("---")
-st.sidebar.info("💡 API Keys များမရှိသေးပါက Groq Console နှင့် Google AI Studio တို့တွင် အခမဲ့ ရယူနိုင်ပါသည်။")
-
 uploaded_file = st.file_uploader("ဗီဒီယို သို့မဟုတ် အသံဖိုင် တင်ပါ (mp3, wav, mp4, m4a)", type=["mp3", "wav", "mp4", "m4a"])
 
 if uploaded_file:
@@ -32,16 +29,27 @@ if uploaded_file:
             with st.spinner("ဖိုင်ကို Processing လုပ်နေပါသည်။ ခေတ္တစောင့်ပါ..."):
                 
                 # ယာယီ ဖိုင်သိမ်းခြင်း
-                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
+                file_ext = os.path.splitext(uploaded_file.name)[1].lower()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
                     tmp_file.write(uploaded_file.read())
                     tmp_file_path = tmp_file.name
 
+                audio_path = tmp_file_path
+
                 try:
+                    # ဖိုင်ဆိုဒ် 24MB ထက်ကြီးပါက အသံဖိုင်အဖြစ် သီးသန့်ပြောင်းပြီး ဖိုင်ဆိုဒ်ချုံ့ခြင်း
+                    if os.path.getsize(tmp_file_path) > 24 * 1024 * 1024:
+                        st.info("ဖိုင်ဆိုဒ်ကြီးသောကြောင့် အသံဖိုင်အဖြစ် ပြောင်းလဲချုံ့နေပါသည်...")
+                        audio = AudioSegment.from_file(tmp_file_path)
+                        compressed_audio_path = tmp_file_path + "_compressed.mp3"
+                        audio.export(compressed_audio_path, format="mp3", bitrate="64k")
+                        audio_path = compressed_audio_path
+
                     # ၁။ Groq Whisper API ဖြင့် Subtitle (SRT) ထုတ်ယူခြင်း
                     groq_client = Groq(api_key=groq_api_key)
-                    with open(tmp_file_path, "rb") as file:
+                    with open(audio_path, "rb") as file:
                         transcription = groq_client.audio.transcriptions.create(
-                            file=(tmp_file_path, file.read()),
+                            file=(audio_path, file.read()),
                             model="whisper-large-v3",
                             response_format="srt"
                         )
@@ -85,5 +93,8 @@ if uploaded_file:
                     st.error(f"Error ဖြစ်ပွားပါသည်: {str(e)}")
                 
                 finally:
+                    # ယာယီဖိုင်များ ပြန်ဖျက်ခြင်း
                     if os.path.exists(tmp_file_path):
                         os.remove(tmp_file_path)
+                    if 'compressed_audio_path' in locals() and os.path.exists(compressed_audio_path):
+                        os.remove(compressed_audio_path)
