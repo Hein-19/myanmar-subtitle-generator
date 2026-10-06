@@ -23,10 +23,10 @@ def format_timestamp(seconds):
     millisecs = int((td.total_seconds() - total_seconds) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millisecs:03d}"
 
-# Subtitle အချိန်များကို ကြိုမပေါ်စေရန်နှင့် အကြာကြီး မကပ်နေစေရန် ချိန်ညှိပေးသော Function
+# Subtitle အချိန်များကို သဘာဝကျကျဖြစ်အောင် ညှိပေးသော Function (Fixing lingering subtitles)
 def json_to_srt(segments):
     srt_output = ""
-    formula_segs = len(segments)
+    total_segs = len(segments)
     
     for idx, segment in enumerate(segments, start=1):
         start_val = segment.get('start', 0) if isinstance(segment, dict) else getattr(segment, 'start', 0)
@@ -34,21 +34,18 @@ def json_to_srt(segments):
         text_val = segment.get('text', '') if isinstance(segment, dict) else getattr(segment, 'text', '')
         text = text_val.strip()
 
-        # ၁။ စာသား ကြိုပေါ်နေခြင်း (Early Start) ကို ကာကွယ်ရန် Start Time ကို အလွန်အမင်း စောမနေစေဘဲ အနည်းငယ် ချိန်ညှိခြင်း
-        # (ပထမဆုံး စာကြောင်းမှလွဲ၍ ကျန်စာကြောင်းများကို အသံစစ်စစ်ထွက်မည့် အချိန်နှင့် ပိုနီးစပ်စေရန် အနည်းငယ် တိုးပေးနိုင်သည်)
-        if idx > 1:
-            start_val = start_val + 0.1  # ၀.၁ စက္ကန့်ခန့် နောက်ဆုတ်ပေးခြင်းဖြင့် ကြိုပေါ်မှုကို ကာကွယ်သည်
-
-        # ၂။ Subtitle ကြာချိန် (Duration) ကို စစ်ဆေးပြီး အလွန်အမင်း မကြာသွားစေရန် ကန့်သတ်ခြင်း
+        # Subtitle ကြာချိန် (Duration) ကို စစ်ဆေးပြီး အလွန်အမင်း မကြာသွားစေရန် ကန့်သတ်ခြင်း
         duration = end_val - start_val
         text_len = len(text)
-        estimated_max_time = max(2.0, min(text_len * 0.15, 5.0))
         
+        # စာကြောင်းတိုလေးတွေအတွက် အချိန်အကြာကြီး မကပ်နေစေရန် (ဖတ်လို့လောက်ရုံ အချိန်အထိသာ ညှိပေးမည်)
+        # ဥပမာ - စာလုံးရေအပေါ်မူတည်ပြီး အများဆုံး ၄ စက္ကန့်မှ ၅ စက္ကန့်အထိသာ ထားမည်
+        estimated_max_time = max(2.0, min(text_len * 0.15, 5.0))
         if duration > 6.0 and text_len < 60:
             end_val = start_val + estimated_max_time
 
-        # ၃။ နောက်စကားကြောင်းနဲ့ တိုက်မိတာ၊ ထပ်နေတာမျိုး မဖြစ်အောင် Gap ထိန်းညှိခြင်း
-        if idx < formula_segs:
+        # နောက်စကားကြောင်းနဲ့ တိုက်မိတာ၊ ဒါမှမဟုတ် အရမ်းကပ်နေတာမျိုးမဖြစ်အောင် အနည်းငယ် இடைவெளி (Gap) ထားပေးခြင်း
+        if idx < total_segs:
             next_seg = segments[idx]
             next_start = next_seg.get('start', 0) if isinstance(next_seg, dict) else getattr(next_seg, 'start', 0)
             if end_val > next_start:
