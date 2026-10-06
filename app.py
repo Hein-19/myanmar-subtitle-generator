@@ -12,7 +12,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🎬 Myanmar Subtitle Generator & Translator")
-st.write("Groq (Whisper) နှင့် Gemini (3.1 Flash Lite) သုံးပြီး Subtitle ဖန်တီးမည်")
+st.write("Groq AI (Whisper + LLaMA 3) သုံးပြီး Subtitle (.srt) အပိုင်းလိုက် ခွဲထုတ် ဘာသာပြန်မည်")
 
 def format_timestamp(seconds):
     td = timedelta(seconds=seconds)
@@ -23,43 +23,21 @@ def format_timestamp(seconds):
     millisecs = int((td.total_seconds() - total_seconds) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millisecs:03d}"
 
-# Subtitle အချိန်များကို သဘာဝကျကျဖြစ်အောင် ညှိပေးသော Function (Fixing lingering subtitles)
 def json_to_srt(segments):
     srt_output = ""
-    total_segs = len(segments)
-    
     for idx, segment in enumerate(segments, start=1):
         start_val = segment.get('start', 0) if isinstance(segment, dict) else getattr(segment, 'start', 0)
         end_val = segment.get('end', 0) if isinstance(segment, dict) else getattr(segment, 'end', 0)
         text_val = segment.get('text', '') if isinstance(segment, dict) else getattr(segment, 'text', '')
-        text = text_val.strip()
-
-        # Subtitle ကြာချိန် (Duration) ကို စစ်ဆေးပြီး အလွန်အမင်း မကြာသွားစေရန် ကန့်သတ်ခြင်း
-        duration = end_val - start_val
-        text_len = len(text)
         
-        # စာကြောင်းတိုလေးတွေအတွက် အချိန်အကြာကြီး မကပ်နေစေရန် (ဖတ်လို့လောက်ရုံ အချိန်အထိသာ ညှိပေးမည်)
-        # ဥပမာ - စာလုံးရေအပေါ်မူတည်ပြီး အများဆုံး ၄ စက္ကန့်မှ ၅ စက္ကန့်အထိသာ ထားမည်
-        estimated_max_time = max(2.0, min(text_len * 0.15, 5.0))
-        if duration > 6.0 and text_len < 60:
-            end_val = start_val + estimated_max_time
-
-        # နောက်စကားကြောင်းနဲ့ တိုက်မိတာ၊ ဒါမှမဟုတ် အရမ်းကပ်နေတာမျိုးမဖြစ်အောင် အနည်းငယ် இடைவெளி (Gap) ထားပေးခြင်း
-        if idx < total_segs:
-            next_seg = segments[idx]
-            next_start = next_seg.get('start', 0) if isinstance(next_seg, dict) else getattr(next_seg, 'start', 0)
-            if end_val > next_start:
-                end_val = max(start_val + 1.0, next_start - 0.1)
-
         start_time = format_timestamp(start_val)
         end_time = format_timestamp(end_val)
-        
+        text = text_val.strip()
         srt_output += f"{idx}\n{start_time} --> {end_time}\n{text}\n\n"
-        
     return srt_output
 
-# SRT ကို အပိုင်းလိုက်ခွဲပြီး Gemini API ဖြင့် ဘာသာပြန်သည့် Function
-def translate_srt_in_chunks(api_key, raw_srt, chunk_size=25):
+# SRT ကို အပိုင်းလိုက်ခွဲပြီး ဘာသာပြန်သည့် Function (Chunking Translation)
+def translate_srt_in_chunks(groq_client, raw_srt, chunk_size=25):
     blocks = [b.strip() for b in raw_srt.strip().split("\n\n") if b.strip()]
     translated_blocks = []
     
@@ -72,7 +50,7 @@ def translate_srt_in_chunks(api_key, raw_srt, chunk_size=25):
         chunk_text = "\n\n".join(chunk_blocks)
         
         progress_percent = min(1.0, (i + chunk_size) / total_blocks)
-        status_text.text(f"Gemini (3.1 Flash Lite) ဖြင့် ဘာသာပြန်နေစဉ်... အပိုင်း ({i+1} မှ {min(i+1+chunk_size, total_blocks)} / {total_blocks} စာကြောင်းများ)")
+        status_text.text(f"ဘာသာပြန်နေစဉ်... အပိုင်း ({i+1} မှ {min(i+1+chunk_size, total_blocks)} / {total_blocks} စာကြောင်းများ)")
         progress_bar.progress(progress_percent)
 
         prompt = f"""You are a professional subtitle translator. 
@@ -86,21 +64,14 @@ STRICT RULES:
 SRT Content:
 {chunk_text}"""
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={api_key.strip()}"
-        headers = {'Content-Type': 'application/json'}
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-
         try:
-            import requests
-            response = requests.post(url, headers=headers, json=payload, timeout=60)
-            res_json = response.json()
-            
-            if response.status_code == 200:
-                translated_chunk = res_json['candidates'][0]['content']['parts'][0]['text'].strip()
-                translated_blocks.append(translated_chunk)
-            else:
-                err_msg = res_json.get('error', {}).get('message', 'Unknown Error')
-                raise Exception(err_msg)
+            response = groq_client.chat.completions.create(
+                model="llama-3.1-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+            )
+            translated_chunk = response.choices[0].message.content.strip()
+            translated_blocks.append(translated_chunk)
         except Exception as e:
             raise Exception(f"Translation Chunk Error: {str(e)}")
 
@@ -108,19 +79,18 @@ SRT Content:
     status_text.empty()
     return "\n\n".join(translated_blocks) + "\n\n"
 
-# Sidebar - API Keys
-st.sidebar.header("🔑 API Keys")
-groq_api_key = st.sidebar.text_input("Groq API Key (Whisper အတွက်)", type="password")
-gemini_api_key = st.sidebar.text_input("Gemini API Key (ဘာသာပြန်ရန်)", type="password")
+# Sidebar - API Key
+st.sidebar.header("🔑 API Key")
+groq_api_key = st.sidebar.text_input("Groq API Key", type="password")
 
 uploaded_file = st.file_uploader("ဗီဒီယို သို့မဟုတ် အသံဖိုင် တင်ပါ (mp3, wav, mp4, m4a)", type=["mp3", "wav", "mp4", "m4a"])
 
 if uploaded_file:
-    if not groq_api_key or not gemini_api_key:
-        st.warning("⚠️ ကျေးဇူးပြု၍ ဘယ်ဘက် Sidebar တွင် API Keys နှစ်ခုလုံး ဖြည့်သွင်းပါ။")
+    if not groq_api_key:
+        st.warning("⚠️ ကျေးဇူးပြု၍ ဘယ်ဘက် Sidebar တွင် Groq API Key ဖြည့်သွင်းပါ။")
     else:
-        if st.button("🚀 Subtitle ထုတ်ပြီး Gemini ဖြင့် ဘာသာပြန်မည်"):
-            with st.spinner("ဖိုင်ကို Processing လုပ်နေပါသည်..."):
+        if st.button("🚀 Subtitle ထုတ်ပြီး အပိုင်းလိုက် ဘာသာပြန်မည်"):
+            with st.spinner("အသံဖိုင်ကို စစ်ဆေးနေပါသည်..."):
                 
                 file_ext = os.path.splitext(uploaded_file.name)[1].lower()
                 with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
@@ -142,9 +112,10 @@ if uploaded_file:
                         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         audio_path = compressed_audio_path
 
-                    # ၁။ Groq Whisper ဖြင့် Subtitle ထုတ်ယူခြင်း
-                    st.info("🎙️ Groq Whisper ဖြင့် အသံများကို စာသားအဖြစ် ပြောင်းလဲနေပါသည်...")
                     groq_client = Groq(api_key=groq_api_key.strip())
+
+                    # ၁။ Whisper API ဖြင့် Subtitle ထုတ်ယူခြင်း
+                    st.info("🎙️ Groq Whisper ဖြင့် အသံများကို စာသားအဖြစ် ပြောင်းလဲနေပါသည်...")
                     with open(audio_path, "rb") as file:
                         transcription = groq_client.audio.transcriptions.create(
                             file=(audio_path, file.read()),
@@ -154,8 +125,8 @@ if uploaded_file:
                     segments = transcription.segments if hasattr(transcription, 'segments') else transcription.get('segments', [])
                     raw_srt = json_to_srt(segments)
 
-                    # ၂။ Gemini Flash Lite ဖြင့် အပိုင်းလိုက် ဘာသာပြန်ခြင်း
-                    translated_srt = translate_srt_in_chunks(gemini_api_key, raw_srt, chunk_size=25)
+                    # ၂။ LLaMA 3 ဖြင့် အပိုင်းလိုက် (Chunking) ဘာသာပြန်ခြင်း
+                    translated_srt = translate_srt_in_chunks(groq_client, raw_srt, chunk_size=25)
 
                     st.success("🎉 ဘာသာပြန်ခြင်း အောင်မြင်ပါသည်!")
                     
