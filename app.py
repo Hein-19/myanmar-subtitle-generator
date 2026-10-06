@@ -142,7 +142,7 @@ if uploaded_file:
     if not groq_api_key or not gemini_api_key:
         st.warning("⚠️ ကျေးဇူးပြု၍ ဘယ်ဘက် Sidebar တွင် API Keys နှစ်ခုလုံး ဖြည့်သွင်းပါ။")
     elif not selected_model:
-        st.warning("⚠️️ ကျေးဇူးပြု၍ Gemini API Key ကို မှန်ကန်စွာ ဖြည့်သွင်းပါ။")
+        st.warning("⚠️ ကျေးဇူးပြု၍ Gemini API Key ကို မှန်ကန်စွာ ဖြည့်သွင်းပါ။")
     else:
         if st.button("🚀 Subtitle ထုတ်ပြီး Gemini ဖြင့် အပိုင်းလိုက် ဘာသာပြန်မည်"):
             with st.spinner("ဖိုင်ကို Processing လုပ်နေပါသည်..."):
