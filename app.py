@@ -4,6 +4,7 @@ import requests
 import tempfile
 import os
 import subprocess
+import time
 from datetime import timedelta
 
 st.set_page_config(page_title="Myanmar Subtitle AI", page_icon="🎬", layout="centered")
@@ -13,9 +14,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🎬 Myanmar Subtitle Generator & Translator")
-st.write("Groq (Whisper) နှင့် Gemini AI သုံးပြီး Subtitle (.srt) ချက်ချင်းထုတ်ယူမည်")
+st.write("Groq (Whisper) နှင့် Gemini AI (Chunking + Auto-Retry) သုံးပြီး Subtitle ဖန်တီးမည်")
 
-# Timestamp ကို SRT format သို့ ပြောင်းပေးသည့် Function
 def format_timestamp(seconds):
     td = timedelta(seconds=seconds)
     total_seconds = int(td.total_seconds())
@@ -25,7 +25,6 @@ def format_timestamp(seconds):
     millisecs = int((td.total_seconds() - total_seconds) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millisecs:03d}"
 
-# Verbose JSON မှ SRT စာသားပြောင်းပေးသည့် Function
 def json_to_srt(segments):
     srt_output = ""
     for idx, segment in enumerate(segments, start=1):
@@ -39,44 +38,114 @@ def json_to_srt(segments):
         srt_output += f"{idx}\n{start_time} --> {end_time}\n{text}\n\n"
     return srt_output
 
+# Gemini ဖြင့် အပိုင်းလိုက် (Chunking) နှင့် Auto-Retry ဖြင့် ဘာသာပြန်သည့် Function
+def translate_srt_with_gemini_chunks(api_key, raw_srt, primary_model, available_models, chunk_size=25):
+    blocks = [b.strip() for b in raw_srt.strip().split("\n\n") if b.strip()]
+    translated_blocks = []
+    
+    total_blocks = len(blocks)
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    models_to_try = [primary_model] + [m for m in available_models if m != primary_model]
+
+    for i in range(0, total_blocks, chunk_size):
+        chunk_blocks = blocks[i:i + chunk_size]
+        chunk_text = "\n\n".join(chunk_blocks)
+        
+        progress_percent = min(1.0, (i + chunk_size) / total_blocks)
+        status_text.text(f"Gemini ဖြင့် ဘာသာပြန်နေစဉ်... အပိုင်း ({i+1} မှ {min(i+1+chunk_size, total_blocks)} / {total_blocks} စာကြောင်းများ)")
+        progress_bar.progress(progress_percent)
+
+        prompt = f"""You are a professional subtitle translator. 
+Translate the following SRT content into natural and fluent Burmese (Myanmar language).
+
+STRICT RULES:
+1. Keep the SRT structure, sequence numbers, and timecodes EXACTLY the same.
+2. Only translate the text lines, do not alter timestamps.
+3. Use natural spoken Burmese suitable for movie subtitles.
+
+SRT Content:
+{chunk_text}"""
+
+        chunk_success = False
+        last_err = ""
+
+        for model_name in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key.strip()}"
+            headers = {'Content-Type': 'application/json'}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}]
+            }
+
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(url, headers=headers, json=payload, timeout=60)
+                    res_json = response.json()
+                    
+                    if response.status_code == 200:
+                        translated_chunk = res_json['candidates'][0]['content']['parts'][0]['text'].strip()
+                        translated_blocks.append(translated_chunk)
+                        chunk_success = True
+                        break
+                    
+                    err_msg = res_json.get('error', {}).get('message', 'Unknown Error')
+                    last_err = err_msg
+                    
+                    if any(kw in err_msg.lower() for kw in ["high demand", "resource_exhausted", "quota", "503", "429", "temporary"]):
+                        if attempt < max_retries - 1:
+                            wait_sec = (attempt + 1) * 3
+                            time.sleep(wait_sec)
+                            continue
+                    break
+                except Exception as e:
+                    last_err = str(e)
+                    time.sleep(2)
+            
+            if chunk_success:
+                break
+        
+        if not chunk_success:
+            raise Exception(f"Gemini API Chunk Error at block {i+1}: {last_err}")
+
+    progress_bar.empty()
+    status_text.empty()
+    return "\n\n".join(translated_blocks) + "\n\n"
+
 # Sidebar - API Keys Setup
 st.sidebar.header("🔑 API Keys")
-groq_api_key = st.sidebar.text_input("Groq API Key", type="password")
-gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password")
+groq_api_key = st.sidebar.text_input("Groq API Key (Whisper အတွက်)", type="password")
+gemini_api_key = st.sidebar.text_input("Gemini API Key (ဘာသာပြန်ရန်)", type="password")
 
-# API Key ထည့်ပြီးပါက ရရှိနိုင်သော Models များကို အလိုအလျောက် ရှာဖွေခြင်း
+# API Key ရှိပါက ရရှိနိုင်သော Models များကို လှမ်းယူခြင်း
 available_models = []
 if gemini_api_key:
     try:
         list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={gemini_api_key.strip()}"
-        res = requests.get(list_url)
+        res = requests.get(list_url, timeout=10)
         if res.status_code == 200:
             models_data = res.json().get('models', [])
-            # generateContent ရသော Models များကိုသာ စစ်ထုတ်ခြင်း
             for m in models_data:
                 if 'generateContent' in m.get('supportedGenerationMethods', []):
-                    model_name = m['name'].replace('models/', '')
-                    available_models.append(model_name)
-        else:
-            st.sidebar.error(f"Gemini API Error: {res.json().get('error', {}).get('message', 'Invalid Key')}")
-    except Exception as e:
-        st.sidebar.error("Model များကို ရှာဖွေ၍မရပါ။ API Key မှန်ကန်မှုရှိမရှိ စစ်ဆေးပါ။")
+                    available_models.append(m['name'].replace('models/', ''))
+    except Exception:
+        pass
 
 selected_model = None
 if available_models:
-    # တွေ့ရှိသမျှ Model များကို ရွေးချယ်ခိုင်းခြင်း (Default အနေဖြင့် ပထမဆုံးတစ်ခုကို ရွေးထားမည်)
-    selected_model = st.sidebar.selectbox("🤖 အလုပ်လုပ်မည့် Gemini Model ကို ရွေးပါ", available_models)
+    selected_model = st.sidebar.selectbox("🤖 Gemini Model ကို ရွေးပါ", available_models)
 
 uploaded_file = st.file_uploader("ဗီဒီယို သို့မဟုတ် အသံဖိုင် တင်ပါ (mp3, wav, mp4, m4a)", type=["mp3", "wav", "mp4", "m4a"])
 
 if uploaded_file:
     if not groq_api_key or not gemini_api_key:
-        st.warning("⚠️ ကျေးဇူးပြု၍ ဘယ်ဘက် Sidebar တွင် API Keys ဖြည့်သွင်းပါ။")
+        st.warning("⚠️ ကျေးဇူးပြု၍ ဘယ်ဘက် Sidebar တွင် API Keys နှစ်ခုလုံး ဖြည့်သွင်းပါ။")
     elif not selected_model:
-        st.warning("⚠️ ကျေးဇူးပြု၍ အသုံးပြုမည့် Gemini Model ကို ရွေးချယ်ပါ။ (Model မပေါ်ပါက API Key မှားနေနိုင်ပါသည်)")
+        st.warning("⚠️️ ကျေးဇူးပြု၍ Gemini API Key ကို မှန်ကန်စွာ ဖြည့်သွင်းပါ။")
     else:
-        if st.button("🚀 Subtitle ထုတ်ပြီး ဘာသာပြန်မည်"):
-            with st.spinner("ဖိုင်ကို Processing လုပ်နေပါသည်။ ခေတ္တစောင့်ပါ..."):
+        if st.button("🚀 Subtitle ထုတ်ပြီး Gemini ဖြင့် အပိုင်းလိုက် ဘာသာပြန်မည်"):
+            with st.spinner("ဖိုင်ကို Processing လုပ်နေပါသည်..."):
                 
                 file_ext = os.path.splitext(uploaded_file.name)[1].lower()
                 with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
@@ -87,7 +156,6 @@ if uploaded_file:
                 compressed_audio_path = None
 
                 try:
-                    # ဖိုင်ဆိုဒ်ကြီးပါက ချုံ့ခြင်း
                     if os.path.getsize(tmp_file_path) > 24 * 1024 * 1024:
                         st.info("ဖိုင်ဆိုဒ်ကြီးသောကြောင့် အသံဖိုင်အဖြစ် ပြောင်းလဲချုံ့နေပါသည်...")
                         compressed_audio_path = tmp_file_path + "_compressed.mp3"
@@ -99,55 +167,24 @@ if uploaded_file:
                         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         audio_path = compressed_audio_path
 
-                    # ၁။ Groq Whisper API ဖြင့် Subtitle ထုတ်ခြင်း
-                    try:
-                        groq_client = Groq(api_key=groq_api_key.strip())
-                        with open(audio_path, "rb") as file:
-                            transcription = groq_client.audio.transcriptions.create(
-                                file=(audio_path, file.read()),
-                                model="whisper-large-v3",
-                                response_format="verbose_json"
-                            )
-                        segments = transcription.segments if hasattr(transcription, 'segments') else transcription.get('segments', [])
-                        raw_srt = json_to_srt(segments)
-                    except Exception as groq_err:
-                        st.error(f"❌ Groq API Error: {str(groq_err)}")
-                        st.stop()
-                    
-                    # ၂။ ရွေးချယ်ထားသော Gemini Model ဖြင့် ဘာသာပြန်ခြင်း
-                    try:
-                        prompt = f"""You are a professional subtitle translator. 
-Translate the following SRT content into natural and fluent Burmese (Myanmar language).
-STRICT RULES:
-1. Keep the SRT structure, sequence numbers, and timecodes EXACTLY the same.
-2. Only translate the text lines, do not alter timestamps.
-3. Use natural spoken Burmese suitable for movie subtitles.
+                    # ၁။ Groq Whisper ဖြင့် Subtitle ထုတ်ယူခြင်း
+                    st.info("🎙️ Groq Whisper ဖြင့် အသံများကို စာသားအဖြစ် ပြောင်းလဲနေပါသည်...")
+                    groq_client = Groq(api_key=groq_api_key.strip())
+                    with open(audio_path, "rb") as file:
+                        transcription = groq_client.audio.transcriptions.create(
+                            file=(audio_path, file.read()),
+                            model="whisper-large-v3",
+                            response_format="verbose_json"
+                        )
+                    segments = transcription.segments if hasattr(transcription, 'segments') else transcription.get('segments', [])
+                    raw_srt = json_to_srt(segments)
 
-SRT Content:
-{raw_srt}"""
+                    # ၂။ Gemini ဖြင့် အပိုင်းလိုက် (Chunking) နှင့် Auto-Retry ဖြင့် ဘာသာပြန်ခြင်း
+                    translated_srt = translate_srt_with_gemini_chunks(
+                        gemini_api_key, raw_srt, selected_model, available_models, chunk_size=25
+                    )
 
-                        url = f"https://generativelanguage.googleapis.com/v1beta/models/{selected_model}:generateContent?key={gemini_api_key.strip()}"
-                        headers = {'Content-Type': 'application/json'}
-                        payload = {
-                            "contents": [{"parts": [{"text": prompt}]}]
-                        }
-                        
-                        response = requests.post(url, headers=headers, json=payload)
-                        res_json = response.json()
-                        
-                        if response.status_code == 200:
-                            translated_srt = res_json['candidates'][0]['content']['parts'][0]['text']
-                        else:
-                            err_msg = res_json.get('error', {}).get('message', 'Unknown Error')
-                            st.error(f"❌ Gemini Translation Error: {err_msg}")
-                            st.stop()
-                            
-                    except Exception as gemini_err:
-                        st.error(f"❌ Gemini API Error: {str(gemini_err)}")
-                        st.stop()
-
-                    # ရလဒ်ပြသခြင်း
-                    st.success(f"🎉 ဘာသာပြန်ခြင်း အောင်မြင်ပါသည်! (အသုံးပြုခဲ့သော Model: {selected_model})")
+                    st.success("🎉 ဘာသာပြန်ခြင်း အောင်မြင်ပါသည်!")
                     
                     st.download_button(
                         label="📥 မြန်မာ Subtitle (.srt) ဒေါင်းလုဒ်ဆွဲရန်",
