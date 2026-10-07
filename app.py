@@ -10,7 +10,15 @@ from datetime import timedelta
 st.set_page_config(page_title="Myanmar Subtitle AI", page_icon="🎬", layout="centered")
 
 st.markdown("""
-    
+    <style>
+    .stButton>button {
+        width: 100%;
+        background-color: #2e7d32;
+        color: white;
+        font-weight: bold;
+        border-radius: 8px;
+    }
+    </style>
 """, unsafe_allow_html=True)
 
 st.title("🎬 Myanmar Subtitle Generator & Translator")
@@ -38,8 +46,8 @@ def json_to_srt(segments):
         srt_output += f"{idx}\n{start_time} --> {end_time}\n{text}\n\n"
     return srt_output
 
-# Gemini ဖြင့် အပိုင်းလိုက် (Chunking) နှင့် Auto-Retry ဖြင့် ဘာသာပြန်သည့် Function
-def translate_srt_with_gemini_chunks(api_key, raw_srt, primary_model, available_models, chunk_size=25):
+# Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ (Chunk size = 10) ဘာသာပြန်သည့် Function
+def translate_srt_with_gemini_chunks(api_key, raw_srt, primary_model, available_models, chunk_size=10):
     blocks = [b.strip() for b in raw_srt.strip().split("\n\n") if b.strip()]
     translated_blocks = []
     
@@ -179,9 +187,9 @@ if uploaded_file:
                     segments = transcription.segments if hasattr(transcription, 'segments') else transcription.get('segments', [])
                     raw_srt = json_to_srt(segments)
 
-                    # ၂။ Gemini ဖြင့် အပိုင်းလိုက် (Chunking) နှင့် Auto-Retry ဖြင့် ဘာသာပြန်ခြင်း
+                    # ၂။ Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ (Chunk size = 10) ဘာသာပြန်ခြင်း
                     translated_srt = translate_srt_with_gemini_chunks(
-                        gemini_api_key, raw_srt, selected_model, available_models, chunk_size=25
+                        gemini_api_key, raw_srt, selected_model, available_models, chunk_size=10
                     )
 
                     st.success("🎉 ဘာသာပြန်ခြင်း အောင်မြင်ပါသည်!")
