@@ -10,8 +10,8 @@ import streamlit as st
 # ==========================================
 # 🔑 API KEYS များကို ဤနေရာတွင် တိုက်ရိုက်ထည့်သွင်းပါ
 # ==========================================
-GROQ_API_KEY = "your_actual_groq_api_key_here"
-GEMINI_API_KEY = "your_actual_gemini_api_key_here"
+GROQ_API_KEY = "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"
+GEMINI_API_KEY = "AQ.Ab8RN6JC2NV6uZz8gxNigXqqf51-G71QFig-pOKjj6TPv0sVyw"
 
 st.set_page_config(
     page_title="Myanmar Subtitle AI", page_icon="🎬", layout="centered"
