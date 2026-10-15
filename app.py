@@ -28,11 +28,11 @@ st.markdown(
 
 st.title("🎬 Myanmar Subtitle Generator & Translator")
 st.write(
-    "Groq (Whisper) နှင့် Gemini AI သုံးပြီး အမြန်ဆုံးနှင့် အတိကျဆုံး မြန်မာ"
-    " စာတန်းထိုးများ ဖန်တီးမည်"
+    "Groq (Whisper) နှင့် Gemini AI (Chunking + Technical Notes) သုံးပြီး Subtitle"
+    " ဖန်တီးမည်"
 )
 
-# 🔒 Streamlit Secrets မှ API Keys များကို ခေါ်ယူခြင်း
+# 🔒 Streamlit Secrets မှ API Keys များကို လုံခြုံစွာ ခေါ်ယူခြင်း
 try:
   GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
   GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
@@ -80,7 +80,7 @@ def json_to_srt(segments):
   return srt_output
 
 
-# Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ မြန်ဆန်တိကျစွာ ဘာသာပြန်သည့် Function
+# Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ မူလစတိုင်လ်အတိုင်း နည်းပညာရှင်းလင်းချက်များနှင့်အတူ ဘာသာပြန်သည့် Function
 def translate_srt_with_gemini_chunks(
     api_key, raw_srt, primary_model, available_models, chunk_size=10
 ):
@@ -106,14 +106,14 @@ def translate_srt_with_gemini_chunks(
     )
     progress_bar.progress(progress_percent)
 
-    # 🚀 ပိုမိုမြန်ဆန်ပြီး ရှင်းလင်းသော Prompt (Latency ကို လျှော့ချရန်)
-    prompt = f"""You are a professional subtitle translator. Translate the following SRT into natural, fluent Burmese.
+    # မူလအတိုင်း တိကျပြည့်စုံသော Prompt
+    prompt = f"""You are a professional technical subtitle translator. 
+Translate the following SRT content into natural and fluent Burmese (Myanmar language).
 
-RULES:
-1. Keep SRT structure, sequence numbers, and timecodes exact. Translate text only.
-2. Use ONLY Burmese script. Do NOT mix with Bengali, Hindi, or other foreign scripts.
-3. Integrate brief technical notes inside square brackets [...] into the nearest suitable subtitle line.
-4. Keep the style natural for video subtitles.
+STRICT RULES:
+1. Keep the SRT structure, sequence numbers, and timecodes EXACTLY the same.
+2. Integrate important technical explanations or difficult terms inside square brackets [...] into the nearest suitable subtitle line if they are too short to stand alone.
+3. Use natural Burmese terms alongside English technical words where appropriate.
 
 SRT Content:
 {chunk_text}"""
@@ -158,13 +158,13 @@ SRT Content:
               ]
           ):
             if attempt < max_retries - 1:
-              wait_sec = (attempt + 1) * 2
+              wait_sec = (attempt + 1) * 3
               time.sleep(wait_sec)
               continue
           break
         except Exception as e:
           last_err = str(e)
-          time.sleep(1)
+          time.sleep(2)
 
         if chunk_success:
           break
@@ -207,7 +207,7 @@ if uploaded_file:
   if not selected_model:
     st.warning("⚠️ ကျေးဇူးပြု၍ Gemini API Key နှင့် Model ကို စစ်ဆေးပါ။")
   else:
-    if st.button("🚀 Subtitle ထုတ်ပြီး Gemini ဖြင့် မြန်ဆန်စွာ ဘာသာပြန်မည်"):
+    if st.button("🚀 Subtitle ထုတ်ပြီး Gemini ဖြင့် ဘာသာပြန်မည်"):
       with st.spinner("ဖိုင်ကို Processing လုပ်နေပါသည်..."):
 
         file_ext = os.path.splitext(uploaded_file.name)[1].lower()
@@ -258,7 +258,7 @@ if uploaded_file:
           )
           raw_srt = json_to_srt(segments)
 
-          # ၂။ Gemini ဖြင့် မြန်ဆန်သော Prompt ဖြင့် အပိုင်းလိုက် ဘာသာပြန်ခြင်း (chunk_size = 10 တိုင်း ထားရှိသည်)
+          # ၂။ Gemini ဖြင့် မူလအတိုင်း အပိုင်းလိုက် ဘာသာပြန်ခြင်း (chunk_size = 10)
           translated_srt = translate_srt_with_gemini_chunks(
               GEMINI_API_KEY,
               raw_srt,
