@@ -167,7 +167,7 @@ SRT Content:
   return "\n\n".join(translated_blocks) + "\n\n"
 
 
-# 🔒 Streamlit Secrets မှ API Keys များကို လုံခြုံစွာ ခေါ်ယူခြင်း (အကြီးစာလုံးဖြင့် သေချာစေရန်)
+# 🔒 Streamlit Secrets မှ API Keys များကို လုံခြုံစွာ ခေါ်ယူခြင်း
 try:
   GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
   GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
@@ -260,7 +260,7 @@ if uploaded_file:
           )
           raw_srt = json_to_srt(segments)
 
-          # ၂။ Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ (Chunk size = 10) ဘာသာပြန်ခြင်း
+          # ၂။ Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ ဘာသာပြန်ခြင်း
           translated_srt = translate_srt_with_gemini_chunks(
               GEMINI_API_KEY,
               raw_srt,
@@ -271,15 +271,36 @@ if uploaded_file:
 
           st.success("🎉 ဘာသာပြန်ခြင်း အောင်မြင်ပါသည်!")
 
-          st.download_button(
-              label="📥 မြန်မာ Subtitle (.srt) ဒေါင်းလုဒ်ဆွဲရန်",
-              data=translated_srt,
-              file_name="burmese_subtitles.srt",
-              mime="text/plain",
-          )
+          # 📥 မူရင်း SRT ရော ဘာသာပြန် SRT ပါ ဒေါင်းလုဒ်ဆွဲနိုင်မည့် နေရာ
+          col1, col2 = st.columns(2)
+          with col1:
+            st.download_button(
+                label="📥 မူရင်း SRT (.srt) ဒေါင်းလုဒ်",
+                data=raw_srt,
+                file_name="original_subtitles.srt",
+                mime="text/plain",
+            )
+          with col2:
+            st.download_button(
+                label="📥 မြန်မာ SRT (.srt) ဒေါင်းလုဒ်",
+                data=translated_srt,
+                file_name="burmese_subtitles.srt",
+                mime="text/plain",
+            )
 
-          with st.expander("စာသား ကြည့်ရှုရန်"):
-            st.text_area("Translated SRT Output", translated_srt, height=300)
+          with st.expander("စာသားများ အစမ်းကြည့်ရှုရန်"):
+            tab1, tab2 = st.tabs(["🇲🇲 မြန်မာဘာသာပြန်", "🇬🇧 မူရင်းစာတန်း"])
+            with tab1:
+              st.text_area(
+                  "Translated Output",
+                  translated_srt,
+                  height=250,
+                  key="tab_translated",
+              )
+            with tab2:
+              st.text_area(
+                  "Original Output", raw_srt, height=250, key="tab_original"
+              )
 
         except Exception as e:
           st.error(f"Error ဖြစ်ပွားပါသည်: {str(e)}")
