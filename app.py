@@ -32,6 +32,12 @@ st.write(
     " ဖန်တီးမည်"
 )
 
+# 🧠 Session State (ဒေါင်းလုဒ်ဆွဲသည့်အခါ ပျောက်မသွားစေရန် မှတ်ဉာဏ်တည်ဆောက်ခြင်း)
+if "raw_srt" not in st.session_state:
+  st.session_state.raw_srt = None
+if "translated_srt" not in st.session_state:
+  st.session_state.translated_srt = None
+
 
 def format_timestamp(seconds):
   td = timedelta(seconds=seconds)
@@ -69,7 +75,7 @@ def json_to_srt(segments):
   return srt_output
 
 
-# Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ (Chunk size = 10) ဘာသာပြန်သည့် Function
+# Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ ဘာသာပြန်သည့် Function
 def translate_srt_with_gemini_chunks(
     api_key, raw_srt, primary_model, available_models, chunk_size=10
 ):
@@ -258,49 +264,18 @@ if uploaded_file:
               if hasattr(transcription, "segments")
               else transcription.get("segments", [])
           )
-          raw_srt = json_to_srt(segments)
+
+          # ရလဒ်များကို session_state ထဲသို့ သိမ်းဆည်းခြင်း
+          st.session_state.raw_srt = json_to_srt(segments)
 
           # ၂။ Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ ဘာသာပြန်ခြင်း
-          translated_srt = translate_srt_with_gemini_chunks(
+          st.session_state.translated_srt = translate_srt_with_gemini_chunks(
               GEMINI_API_KEY,
-              raw_srt,
+              st.session_state.raw_srt,
               selected_model,
               available_models,
               chunk_size=10,
           )
-
-          st.success("🎉 ဘာသာပြန်ခြင်း အောင်မြင်ပါသည်!")
-
-          # 📥 မူရင်း SRT ရော ဘာသာပြန် SRT ပါ ဒေါင်းလုဒ်ဆွဲနိုင်မည့် နေရာ
-          col1, col2 = st.columns(2)
-          with col1:
-            st.download_button(
-                label="📥 မူရင်း SRT (.srt) ဒေါင်းလုဒ်",
-                data=raw_srt,
-                file_name="original_subtitles.srt",
-                mime="text/plain",
-            )
-          with col2:
-            st.download_button(
-                label="📥 မြန်မာ SRT (.srt) ဒေါင်းလုဒ်",
-                data=translated_srt,
-                file_name="burmese_subtitles.srt",
-                mime="text/plain",
-            )
-
-          with st.expander("စာသားများ အစမ်းကြည့်ရှုရန်"):
-            tab1, tab2 = st.tabs(["🇲🇲 မြန်မာဘာသာပြန်", "🇬🇧 မူရင်းစာတန်း"])
-            with tab1:
-              st.text_area(
-                  "Translated Output",
-                  translated_srt,
-                  height=250,
-                  key="tab_translated",
-              )
-            with tab2:
-              st.text_area(
-                  "Original Output", raw_srt, height=250, key="tab_original"
-              )
 
         except Exception as e:
           st.error(f"Error ဖြစ်ပွားပါသည်: {str(e)}")
@@ -310,3 +285,42 @@ if uploaded_file:
             os.remove(tmp_file_path)
           if compressed_audio_path and os.path.exists(compressed_audio_path):
             os.remove(compressed_audio_path)
+
+# 📥 ဒေါင်းလုဒ် ခလုတ်များကို button အပြင်ဘက်သို့ ထုတ်ထားသဖြင့် Download နှိပ်လျှင် ပျောက်မသွားတော့ပါ
+if st.session_state.raw_srt and st.session_state.translated_srt:
+  st.success("🎉 ဘာသာပြန်ခြင်း အောင်မြင်ပါသည်!")
+
+  col1, col2 = st.columns(2)
+  with col1:
+    st.download_button(
+        label="📥 မူရင်း SRT (.srt) ဒေါင်းလုဒ်",
+        data=st.session_state.raw_srt,
+        file_name="original_subtitles.srt",
+        mime="text/plain",
+        key="btn_dl_raw",
+    )
+  with col2:
+    st.download_button(
+        label="📥 မြန်မာ SRT (.srt) ဒေါင်းလုဒ်",
+        data=st.session_state.translated_srt,
+        file_name="burmese_subtitles.srt",
+        mime="text/plain",
+        key="btn_dl_trans",
+    )
+
+  with st.expander("စာသားများ အစမ်းကြည့်ရှုရန်"):
+    tab1, tab2 = st.tabs(["🇲🇲 မြန်မာဘာသာပြန်", "🇬🇧 မူရင်းစာတန်း"])
+    with tab1:
+      st.text_area(
+          "Translated Output",
+          st.session_state.translated_srt,
+          height=250,
+          key="tab_translated",
+      )
+    with tab2:
+      st.text_area(
+          "Original Output",
+          st.session_state.raw_srt,
+          height=250,
+          key="tab_original",
+      )
