@@ -12,7 +12,6 @@ st.set_page_config(
     layout="centered",
 )
 
-# Custom Styling
 st.markdown(
     """
     <style>
@@ -31,17 +30,16 @@ st.markdown(
 
 st.title("⚡ Groq Full Subtitle Generator")
 st.caption(
-    "Groq Whisper-Large-v3 (အသံဖမ်းယူမှု) + Groq Llama 3 (မြန်မာဘာသာပြန်)"
+    "Groq Whisper-Large-v3 (အသံဖမ်းယူမှု) + Groq Active LLM (မြန်မာဘာသာပြန်)"
 )
 
-# 🧠 Session State စနစ် (Download နှိပ်လျှင် ပျောက်မသွားစေရန်)
+# 🧠 Session State စနစ်
 if "raw_srt" not in st.session_state:
   st.session_state.raw_srt = None
 if "translated_srt" not in st.session_state:
   st.session_state.translated_srt = None
 
 
-# Timestamp ပြောင်းလဲပေးသည့် function
 def format_timestamp(seconds):
   td = timedelta(seconds=seconds)
   total_seconds = int(td.total_seconds())
@@ -52,7 +50,6 @@ def format_timestamp(seconds):
   return f"{hours:02d}:{minutes:02d}:{secs:02d},{millisecs:03d}"
 
 
-# Whisper segments မှ SRT စာသားအဖြစ် ပြောင်းလဲခြင်း
 def json_to_srt(segments):
   srt_output = ""
   for idx, segment in enumerate(segments, start=1):
@@ -79,22 +76,14 @@ def json_to_srt(segments):
   return srt_output
 
 
-# Groq ဖြင့် မြန်မာဘာသာသို့ အမြန်ဘာသာပြန်မည့် Function (Fallback Models ပါဝင်သည်)
-def translate_srt_with_groq(groq_client, raw_srt, chunk_size=20):
+# Groq ဖြင့် မြန်မာဘာသာသို့ တိုက်ရိုက် ဘာသာပြန်မည့် Function
+def translate_srt_with_groq(groq_client, raw_srt, model_name, chunk_size=20):
   blocks = [b.strip() for b in raw_srt.strip().split("\n\n") if b.strip()]
   translated_blocks = []
 
   total_blocks = len(blocks)
   progress_bar = st.progress(0)
   status_placeholder = st.empty()
-
-  # စမ်းသပ်မည့် Groq Models များ (404 Error ကာကွယ်ရန်)
-  candidate_models = [
-      "llama-3.1-8b-instant",  # အမြန်ဆုံးနှင့် အငြိမ်ဆုံး Model
-      "llama-3.3-70b-versatile",
-      "llama3-70b-8192",
-      "mixtral-8x7b-32768",
-  ]
 
   system_prompt = """You are a professional Burmese subtitle translator.
 Translate the following SRT subtitles into natural, conversational Burmese (Myanmar language).
@@ -115,13 +104,12 @@ STRICT RULES:
     progress_percent = min(1.0, (i + chunk_size) / total_blocks)
     progress_bar.progress(progress_percent)
     status_placeholder.info(
-        f"⚡ Groq ဖြင့် ဘာသာပြန်နေစဉ်... အပိုင်း ({start_block} မှ"
+        f"⚡ {model_name} ဖြင့် မြန်မာပြန်နေစဉ်... အပိုင်း ({start_block} မှ"
         f" {end_block} / {total_blocks} စာကြောင်းများ)"
     )
 
-    chunk_success = False
-
-    for model_name in candidate_models:
+    translated_chunk = None
+    for attempt in range(3):
       try:
         response = groq_client.chat.completions.create(
             model=model_name,
@@ -131,23 +119,17 @@ STRICT RULES:
             ],
             temperature=0.3,
         )
-
         translated_chunk = response.choices[0].message.content.strip()
-        translated_blocks.append(translated_chunk)
-        chunk_success = True
-        time.sleep(0.4)
+        time.sleep(0.5)
         break
-
       except Exception as e:
-        err_msg = str(e).lower()
-        # 404 (Model not found) ဖြစ်ပါက နောက် model တစ်ခုသို့ အလိုအလျောက် ခုန်ကူးမည်
-        if "404" in err_msg or "not found" in err_msg:
-          continue
-        else:
-          time.sleep(2)
+        if attempt == 2:
+          raise Exception(
+              f"Groq API Error ({model_name}) at block {start_block}: {str(e)}"
+          )
+        time.sleep(2)
 
-    if not chunk_success:
-      translated_blocks.append(chunk_text)
+    translated_blocks.append(translated_chunk)
 
   progress_bar.empty()
   status_placeholder.empty()
@@ -164,15 +146,34 @@ except Exception:
   )
   st.stop()
 
-# ဖိုင်တင်ရန် နေရာ
+# Groq ထဲရှိ လက်ရှိ Active ဖြစ်နေသော Chat Models များကို အလိုအလျောက် ဆွဲယူခြင်း
+groq_client = Groq(api_key=GROQ_API_KEY.strip())
+available_chat_models = []
+try:
+  models_list = groq_client.models.list().data
+  for m in models_list:
+    mid = m.id.lower()
+    # Whisper, TTS နှင့် Guard မော်ဒယ်များကို ဖယ်ထုတ်ပြီး Text/Chat model များကိုသာ ယူခြင်း
+    if not any(kw in mid for kw in ["whisper", "guard", "tts", "orpheus"]):
+      available_chat_models.append(m.id)
+except Exception:
+  available_chat_models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+
+# Sidebar တွင် လက်ရှိသုံးနိုင်သော Model များ ပြသပေးခြင်း
+selected_model = st.sidebar.selectbox(
+    "🤖 Groq Translation Model ကို ရွေးပါ",
+    available_chat_models,
+    index=0 if available_chat_models else None,
+)
+
 uploaded_file = st.file_uploader(
     "ဗီဒီယို သို့မဟုတ် အသံဖိုင် တင်ပါ (mp3, wav, mp4, m4a)",
     type=["mp3", "wav", "mp4", "m4a"],
 )
 
 if uploaded_file:
-  if not GROQ_API_KEY:
-    st.warning("⚠️ ကျေးဇူးပြု၍ GROQ_API_KEY ထည့်သွင်းပါ။")
+  if not selected_model:
+    st.error("⚠️ အသုံးပြုနိုင်သော Groq Model မတွေ့ရှိပါ။")
   else:
     if st.button("🚀 Groq ဖြင့် စာတန်းထိုး ထုတ်ပြီး မြန်မာပြန်မည်"):
       with st.spinner("ဖိုင်ကို Processing လုပ်နေပါသည်..."):
@@ -188,7 +189,6 @@ if uploaded_file:
         compressed_audio_path = None
 
         try:
-          # ဖိုင်ဆိုဒ် 24MB ထက် ကြီးပါက ffmpeg ဖြင့် အသံဖိုင် အလိုအလျောက် ချုံ့ခြင်း
           if os.path.getsize(tmp_file_path) > 24 * 1024 * 1024:
             st.info(
                 "ဖိုင်ဆိုဒ်ကြီးသောကြောင့် အသံဖိုင်အဖြစ် ပြောင်းလဲချုံ့နေပါသည်..."
@@ -214,8 +214,6 @@ if uploaded_file:
             )
             audio_path = compressed_audio_path
 
-          groq_client = Groq(api_key=GROQ_API_KEY.strip())
-
           # ၁။ Groq Whisper ဖြင့် အသံဖမ်းယူခြင်း
           st.info("🎙️ Whisper-Large-v3 ဖြင့် အသံဖမ်းယူနေပါသည်...")
           with open(audio_path, "rb") as file:
@@ -232,10 +230,16 @@ if uploaded_file:
           )
           st.session_state.raw_srt = json_to_srt(segments)
 
-          # ၂။ Groq Llama ဖြင့် မြန်မာဘာသာသို့ ပြန်ဆိုခြင်း
-          st.info("🇲🇲 မြန်မာဘာသာသို့ အမြန် ပြန်ဆိုနေပါသည်...")
+          # ၂။ Sidebar တွင် ရွေးထားသော Active Model ဖြင့် မြန်မာဘာသာသို့ ပြန်ဆိုခြင်း
+          st.info(
+              f"🇲🇲 {selected_model} ဖြင့် မြန်မာဘာသာသို့ တိုက်ရိုက်"
+              " ပြန်ဆိုနေပါသည်..."
+          )
           st.session_state.translated_srt = translate_srt_with_groq(
-              groq_client, st.session_state.raw_srt, chunk_size=20
+              groq_client,
+              st.session_state.raw_srt,
+              model_name=selected_model,
+              chunk_size=20,
           )
 
         except Exception as e:
@@ -249,7 +253,7 @@ if uploaded_file:
 
 # 📥 ဒေါင်းလုဒ် ခလုတ်များ
 if st.session_state.raw_srt and st.session_state.translated_srt:
-  st.success("🎉 အားလုံး အောင်မြင်စွာ ပြီးစီးပါပြီ!")
+  st.success("🎉 မြန်မာစာတန်းထိုး အောင်မြင်စွာ ထွက်ရှိပါပြီ!")
 
   col1, col2 = st.columns(2)
   with col1:
