@@ -28,11 +28,11 @@ st.markdown(
 
 st.title("🎬 Myanmar Subtitle Generator & Translator")
 st.write(
-    "Groq (Whisper) နှင့် Gemini AI (Chunking + Auto-Retry 60s) သုံးပြီး"
+    "Groq (Whisper) နှင့် Gemini AI (Chunking 10 + Paced Rate Limit) သုံးပြီး"
     " Subtitle ဖန်တီးမည်"
 )
 
-# 🧠 Session State (ဒေါင်းလုဒ်ဆွဲသည့်အခါ ပျောက်မသွားစေရန် မှတ်ဉာဏ်တည်ဆောက်ခြင်း)
+# 🧠 Session State (ဒေါင်းလုဒ်ခလုတ်နှိပ်လျှင် ပျောက်မသွားစေရန်)
 if "raw_srt" not in st.session_state:
   st.session_state.raw_srt = None
 if "translated_srt" not in st.session_state:
@@ -75,9 +75,9 @@ def json_to_srt(segments):
   return srt_output
 
 
-# Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ ဘာသာပြန်သည့် Function (Auto-Retry 60s ပါဝင်သည်)
+# Gemini ဖြင့် ၁၀ ကြောင်းစီ ခွဲ၍ ဘာသာပြန်သည့် Function
 def translate_srt_with_gemini_chunks(
-    api_key, raw_srt, primary_model, available_models, chunk_size=15
+    api_keys, raw_srt, primary_model, available_models, chunk_size=10
 ):
   blocks = [b.strip() for b in raw_srt.strip().split("\n\n") if b.strip()]
   translated_blocks = []
@@ -89,6 +89,7 @@ def translate_srt_with_gemini_chunks(
   models_to_try = [primary_model] + [
       m for m in available_models if m != primary_model
   ]
+  current_key_idx = 0
 
   for i in range(0, total_blocks, chunk_size):
     chunk_blocks = blocks[i : i + chunk_size]
@@ -97,7 +98,7 @@ def translate_srt_with_gemini_chunks(
     start_block = i + 1
     end_block = min(i + chunk_size, total_blocks)
 
-    prompt = f"""You are a professional subtitle translator. 
+    prompt = f"""You are a professional subtitle translator.
 Translate the following SRT content into natural and fluent Burmese (Myanmar language).
 
 STRICT RULES:
@@ -111,7 +112,6 @@ SRT Content:
 
     chunk_success = False
 
-    # အောင်မြင်သည်အထိ (သို့မဟုတ် retry စောင့်ပြီး) မောင်းနှင်မည့် loop
     while not chunk_success:
       progress_percent = min(1.0, (i + chunk_size) / total_blocks)
       progress_bar.progress(progress_percent)
@@ -120,8 +120,10 @@ SRT Content:
           f" {end_block} / {total_blocks} စာကြောင်းများ)"
       )
 
+      active_key = api_keys[current_key_idx]
+
       for model_name in models_to_try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key.strip()}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={active_key.strip()}"
         headers = {"Content-Type": "application/json"}
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
@@ -137,7 +139,9 @@ SRT Content:
             )
             translated_blocks.append(translated_chunk)
             chunk_success = True
-            time.sleep(2)  # Request များ ဆက်တိုက်မဖြစ်စေရန် ၂ စက္ကန့် အနားပေးခြင်း
+
+            # 15 RPM ပြည့်မသွားစေရန် တည်ငြိမ်သော ၄.၅ စက္ကန့် ပုံမှန်အနားပေးခြင်း
+            time.sleep(4.5)
             break
 
           err_msg = (
@@ -145,54 +149,56 @@ SRT Content:
               + f" (Status: {response.status_code})"
           )
 
-          # Quota / 429 Rate Limit မိသွားပါက ရပ်တန့်မသွားဘဲ ၆၀ စက္ကန့် Countdown စောင့်ဆိုင်းခြင်း
+          # Quota / Rate Limit (429) ဖြစ်ပါက အခြား Key ရှိလျှင် ချက်ချင်း လှည့်သုံးခြင်း
           if any(
               kw in err_msg
               for kw in [
                   "quota",
                   "429",
                   "resource_exhausted",
-                  "resourceexhausted",
                   "rate",
                   "high demand",
               ]
           ):
+            if len(api_keys) > 1:
+              current_key_idx = (current_key_idx + 1) % len(api_keys)
+              status_placeholder.warning(
+                  f"🔄 Key {current_key_idx+1} သို့ ပြောင်းလဲ၍ ဆက်လက်"
+                  " ကြိုးစားနေပါသည်..."
+              )
+              time.sleep(2)
+              break
+
+            # Key ၁ ခုတည်း ဖြစ်ပါက ၆၀ စက္ကန့် Countdown စောင့်ဆိုင်းခြင်း
             for remaining in range(60, 0, -1):
               status_placeholder.warning(
                   f"⏳ Gemini Rate Limit ခေတ္တပြည့်သွားပါသဖြင့် စက္ကန့် {remaining}"
                   f" စောင့်ဆိုင်းနေပါသည်... စက္ကန့်ပြည့်ပါက အပိုင်း ({start_block}"
-                  f" မှ {end_block}) ကို အလိုအလျောက် ဆက်လက် ဘာသာပြန်ပါမည်။"
+                  f" မှ {end_block}) ကို ဆက်လက် ဘာသာပြန်ပါမည်။"
               )
               time.sleep(1)
 
             status_placeholder.info(
-                f"🔄 အပိုင်း ({start_block} မှ {end_block}) ကို ပြန်လည်"
-                " ချိတ်ဆက်နေပါသည်..."
+                f"🔄 အပိုင်း ({start_block}) ကို ပြန်လည် စတင်နေပါသည်..."
             )
-            break  # ၆၀ စက္ကန့် ပြည့်ပါက loop အစသို့ ပြန်သွားပြီး ထို chunk ကို ပြန်တောင်းမည်
-
-        except Exception as e:
-          err_str = str(e).lower()
-          if "429" in err_str or "quota" in err_str:
-            for remaining in range(60, 0, -1):
-              status_placeholder.warning(
-                  f"⏳ Rate Limit မိသွားပါသဖြင့် စက္ကန့် {remaining}"
-                  " စောင့်ဆိုင်းနေပါသည်..."
-              )
-              time.sleep(1)
             break
-          else:
-            time.sleep(3)
+
+        except Exception:
+          time.sleep(3)
 
   progress_bar.empty()
   status_placeholder.empty()
   return "\n\n".join(translated_blocks) + "\n\n"
 
 
-# 🔒 Streamlit Secrets မှ API Keys များကို လုံခြုံစွာ ခေါ်ယူခြင်း
+# 🔒 Secrets မှ API Keys များ ခေါ်ယူခြင်း (ကော်မာခံ၍ Key အများအပြား ထည့်နိုင်ပါသည်)
 try:
   GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-  GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+  gemini_raw_keys = st.secrets["GEMINI_API_KEY"]
+  # ကော်မာ ပါပါက list ခွဲထုတ်ခြင်း၊ မပါပါက single key အဖြစ် ယူခြင်း
+  GEMINI_API_KEYS = [
+      k.strip() for k in gemini_raw_keys.split(",") if k.strip()
+  ]
 except Exception:
   st.error(
       "⚠️ Streamlit Secrets ထဲတွင် API Keys များ တွေ့မရှိပါ။ .streamlit/secrets.toml"
@@ -200,11 +206,11 @@ except Exception:
   )
   st.stop()
 
-# API Key ရှိပါက ရရှိနိုင်သော Models များကို လှမ်းယူခြင်း
+# ပထမဆုံး Key ဖြင့် ရရှိနိုင်သော Models များကို ခေါ်ယူခြင်း
 available_models = []
-if GEMINI_API_KEY:
+if GEMINI_API_KEYS:
   try:
-    list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY.strip()}"
+    list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEYS[0]}"
     res = requests.get(list_url, timeout=10)
     if res.status_code == 200:
       models_data = res.json().get("models", [])
@@ -216,8 +222,14 @@ if GEMINI_API_KEY:
 
 selected_model = None
 if available_models:
+  # gemini-2.5-flash သို့မဟုတ် gemini-1.5-flash ကို default ရွေးပေးခြင်း
+  default_index = 0
+  for i, m in enumerate(available_models):
+    if "flash" in m.lower() and "lite" not in m.lower():
+      default_index = i
+      break
   selected_model = st.sidebar.selectbox(
-      "🤖 Gemini Model ကို ရွေးပါ", available_models
+      "🤖 Gemini Model ကို ရွေးပါ", available_models, index=default_index
   )
 
 uploaded_file = st.file_uploader(
@@ -226,7 +238,7 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file:
-  if not GROQ_API_KEY or not GEMINI_API_KEY:
+  if not GROQ_API_KEY or not GEMINI_API_KEYS:
     st.warning("⚠️ ကျေးဇူးပြု၍ Streamlit Secrets တွင် API Keys များကို ထည့်သွင်းပါ။")
   elif not selected_model:
     st.warning("⚠️ ကျေးဇူးပြု၍ Gemini API Key ကို မှန်ကန်စွာ ဖြည့်သွင်းပါ။")
@@ -287,16 +299,15 @@ if uploaded_file:
               else transcription.get("segments", [])
           )
 
-          # ရလဒ်များကို session_state ထဲသို့ သိမ်းဆည်းခြင်း
           st.session_state.raw_srt = json_to_srt(segments)
 
-          # ၂။ Gemini ဖြင့် ၁၅ ကြောင်းစီ ခွဲ၍ ဘာသာပြန်ခြင်း (chunk_size=15)
+          # ၂။ Gemini ဖြင့် ၁၀ ကြောင်းစီ ခွဲ၍ ဘာသာပြန်ခြင်း (chunk_size=10)
           st.session_state.translated_srt = translate_srt_with_gemini_chunks(
-              GEMINI_API_KEY,
+              GEMINI_API_KEYS,
               st.session_state.raw_srt,
               selected_model,
               available_models,
-              chunk_size=15,
+              chunk_size=10,
           )
 
         except Exception as e:
@@ -308,7 +319,7 @@ if uploaded_file:
           if compressed_audio_path and os.path.exists(compressed_audio_path):
             os.remove(compressed_audio_path)
 
-# 📥 ဒေါင်းလုဒ် ခလုတ်များကို button အပြင်ဘက်သို့ ထုတ်ထားသဖြင့် Download နှိပ်လျှင် ပျောက်မသွားတော့ပါ
+# 📥 ဒေါင်းလုဒ် ခလုတ်များ
 if st.session_state.raw_srt and st.session_state.translated_srt:
   st.success("🎉 ဘာသာပြန်ခြင်း အောင်မြင်ပါသည်!")
 
