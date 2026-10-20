@@ -239,7 +239,7 @@ if uploaded_file:
               groq_client,
               st.session_state.raw_srt,
               model_name=selected_model,
-              chunk_size=20,
+              chunk_size=10,
           )
 
         except Exception as e:
