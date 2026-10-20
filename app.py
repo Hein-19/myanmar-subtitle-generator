@@ -28,8 +28,8 @@ st.markdown(
 
 st.title("🎬 Myanmar Subtitle Generator & Translator")
 st.write(
-    "Groq (Whisper) နှင့် Gemini AI (Chunking + Auto-Retry) သုံးပြီး Subtitle"
-    " ဖန်တီးမည်"
+    "Groq (Whisper) နှင့် Gemini AI (Chunking + Auto-Retry 60s) သုံးပြီး"
+    " Subtitle ဖန်တီးမည်"
 )
 
 # 🧠 Session State (ဒေါင်းလုဒ်ဆွဲသည့်အခါ ပျောက်မသွားစေရန် မှတ်ဉာဏ်တည်ဆောက်ခြင်း)
@@ -75,16 +75,16 @@ def json_to_srt(segments):
   return srt_output
 
 
-# Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ ဘာသာပြန်သည့် Function
+# Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ ဘာသာပြန်သည့် Function (Auto-Retry 60s ပါဝင်သည်)
 def translate_srt_with_gemini_chunks(
-    api_key, raw_srt, primary_model, available_models, chunk_size=10
+    api_key, raw_srt, primary_model, available_models, chunk_size=15
 ):
   blocks = [b.strip() for b in raw_srt.strip().split("\n\n") if b.strip()]
   translated_blocks = []
 
   total_blocks = len(blocks)
   progress_bar = st.progress(0)
-  status_text = st.empty()
+  status_placeholder = st.empty()
 
   models_to_try = [primary_model] + [
       m for m in available_models if m != primary_model
@@ -94,12 +94,8 @@ def translate_srt_with_gemini_chunks(
     chunk_blocks = blocks[i : i + chunk_size]
     chunk_text = "\n\n".join(chunk_blocks)
 
-    progress_percent = min(1.0, (i + chunk_size) / total_blocks)
-    status_text.text(
-        f"Gemini ဖြင့် ဘာသာပြန်နေစဉ်... အပိုင်း ({i+1} မှ"
-        f" {min(i+1+chunk_size, total_blocks)} / {total_blocks} စာကြောင်းများ)"
-    )
-    progress_bar.progress(progress_percent)
+    start_block = i + 1
+    end_block = min(i + chunk_size, total_blocks)
 
     prompt = f"""You are a professional subtitle translator. 
 Translate the following SRT content into natural and fluent Burmese (Myanmar language).
@@ -108,68 +104,88 @@ STRICT RULES:
 1. Keep the SRT structure, sequence numbers, and timecodes EXACTLY the same.
 2. Only translate the text lines, do not alter timestamps.
 3. Use natural spoken Burmese suitable for movie subtitles.
+4. If a sentence is long, wrap it into two lines using a single newline (\\n) for readability.
 
 SRT Content:
 {chunk_text}"""
 
     chunk_success = False
-    last_err = ""
 
-    for model_name in models_to_try:
-      url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key.strip()}"
-      headers = {"Content-Type": "application/json"}
-      payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    # အောင်မြင်သည်အထိ (သို့မဟုတ် retry စောင့်ပြီး) မောင်းနှင်မည့် loop
+    while not chunk_success:
+      progress_percent = min(1.0, (i + chunk_size) / total_blocks)
+      progress_bar.progress(progress_percent)
+      status_placeholder.info(
+          f"Gemini ဖြင့် ဘာသာပြန်နေစဉ်... အပိုင်း ({start_block} မှ"
+          f" {end_block} / {total_blocks} စာကြောင်းများ)"
+      )
 
-      max_retries = 3
-      for attempt in range(max_retries):
+      for model_name in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key.strip()}"
+        headers = {"Content-Type": "application/json"}
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+
         try:
-          response = requests.post(url, headers=headers, json=payload, timeout=60)
+          response = requests.post(
+              url, headers=headers, json=payload, timeout=60
+          )
           res_json = response.json()
 
           if response.status_code == 200:
             translated_chunk = (
-                res_json["candidates"][0]["content"]["parts"][0]["text"]
-                .strip()
+                res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
             )
             translated_blocks.append(translated_chunk)
             chunk_success = True
+            time.sleep(2)  # Request များ ဆက်တိုက်မဖြစ်စေရန် ၂ စက္ကန့် အနားပေးခြင်း
             break
 
           err_msg = (
-              res_json.get("error", {}).get("message", "Unknown Error")
+              res_json.get("error", {}).get("message", "").lower()
+              + f" (Status: {response.status_code})"
           )
-          last_err = err_msg
 
+          # Quota / 429 Rate Limit မိသွားပါက ရပ်တန့်မသွားဘဲ ၆၀ စက္ကန့် Countdown စောင့်ဆိုင်းခြင်း
           if any(
-              kw in err_msg.lower()
+              kw in err_msg
               for kw in [
-                  "high demand",
-                  "resource_exhausted",
                   "quota",
-                  "503",
                   "429",
-                  "temporary",
+                  "resource_exhausted",
+                  "resourceexhausted",
+                  "rate",
+                  "high demand",
               ]
           ):
-            if attempt < max_retries - 1:
-              wait_sec = (attempt + 1) * 3
-              time.sleep(wait_sec)
-              continue
-          break
+            for remaining in range(60, 0, -1):
+              status_placeholder.warning(
+                  f"⏳ Gemini Rate Limit ခေတ္တပြည့်သွားပါသဖြင့် စက္ကန့် {remaining}"
+                  f" စောင့်ဆိုင်းနေပါသည်... စက္ကန့်ပြည့်ပါက အပိုင်း ({start_block}"
+                  f" မှ {end_block}) ကို အလိုအလျောက် ဆက်လက် ဘာသာပြန်ပါမည်။"
+              )
+              time.sleep(1)
+
+            status_placeholder.info(
+                f"🔄 အပိုင်း ({start_block} မှ {end_block}) ကို ပြန်လည်"
+                " ချိတ်ဆက်နေပါသည်..."
+            )
+            break  # ၆၀ စက္ကန့် ပြည့်ပါက loop အစသို့ ပြန်သွားပြီး ထို chunk ကို ပြန်တောင်းမည်
+
         except Exception as e:
-          last_err = str(e)
-          time.sleep(2)
-
-      if chunk_success:
-        break
-
-      if not chunk_success:
-        raise Exception(
-            f"Gemini API Chunk Error at block {i+1}: {last_err}"
-        )
+          err_str = str(e).lower()
+          if "429" in err_str or "quota" in err_str:
+            for remaining in range(60, 0, -1):
+              status_placeholder.warning(
+                  f"⏳ Rate Limit မိသွားပါသဖြင့် စက္ကန့် {remaining}"
+                  " စောင့်ဆိုင်းနေပါသည်..."
+              )
+              time.sleep(1)
+            break
+          else:
+            time.sleep(3)
 
   progress_bar.empty()
-  status_text.empty()
+  status_placeholder.empty()
   return "\n\n".join(translated_blocks) + "\n\n"
 
 
@@ -219,7 +235,9 @@ if uploaded_file:
       with st.spinner("ဖိုင်ကို Processing လုပ်နေပါသည်..."):
 
         file_ext = os.path.splitext(uploaded_file.name)[1].lower()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=file_ext
+        ) as tmp_file:
           tmp_file.write(uploaded_file.read())
           tmp_file_path = tmp_file.name
 
@@ -228,7 +246,9 @@ if uploaded_file:
 
         try:
           if os.path.getsize(tmp_file_path) > 24 * 1024 * 1024:
-            st.info("ဖိုင်ဆိုဒ်ကြီးသောကြောင့် အသံဖိုင်အဖြစ် ပြောင်းလဲချုံ့နေပါသည်...")
+            st.info(
+                "ဖိုင်ဆိုဒ်ကြီးသောကြောင့် အသံဖိုင်အဖြစ် ပြောင်းလဲချုံ့နေပါသည်..."
+            )
             compressed_audio_path = tmp_file_path + "_compressed.mp3"
             cmd = [
                 "ffmpeg",
@@ -251,7 +271,9 @@ if uploaded_file:
             audio_path = compressed_audio_path
 
           # ၁။ Groq Whisper ဖြင့် Subtitle ထုတ်ယူခြင်း
-          st.info("🎙️ Groq Whisper ဖြင့် အသံများကို စာသားအဖြစ် ပြောင်းလဲနေပါသည်...")
+          st.info(
+              "🎙️ Groq Whisper ဖြင့် အသံများကို စာသားအဖြစ် ပြောင်းလဲနေပါသည်..."
+          )
           groq_client = Groq(api_key=GROQ_API_KEY.strip())
           with open(audio_path, "rb") as file:
             transcription = groq_client.audio.transcriptions.create(
@@ -268,13 +290,13 @@ if uploaded_file:
           # ရလဒ်များကို session_state ထဲသို့ သိမ်းဆည်းခြင်း
           st.session_state.raw_srt = json_to_srt(segments)
 
-          # ၂။ Gemini ဖြင့် အပိုင်းငယ်များခွဲ၍ ဘာသာပြန်ခြင်း
+          # ၂။ Gemini ဖြင့် ၁၅ ကြောင်းစီ ခွဲ၍ ဘာသာပြန်ခြင်း (chunk_size=15)
           st.session_state.translated_srt = translate_srt_with_gemini_chunks(
               GEMINI_API_KEY,
               st.session_state.raw_srt,
               selected_model,
               available_models,
-              chunk_size=10,
+              chunk_size=15,
           )
 
         except Exception as e:
