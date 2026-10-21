@@ -77,9 +77,9 @@ def json_to_srt(segments):
   return srt_output
 
 
-# Gemini ဖြင့် သဘာဝကျသော မြန်မာပြန်ဆိုမှု Function
+# Gemini ဖြင့် သဘာဝကျသော မြန်မာပြန်ဆိုမှု Function (chunk_size=25)
 def translate_srt_with_gemini(
-    api_key, raw_srt, model_name="gemini-2.5-flash", chunk_size=15
+    api_key, raw_srt, model_name="gemini-2.5-flash", chunk_size=25
 ):
   blocks = [b.strip() for b in raw_srt.strip().split("\n\n") if b.strip()]
   translated_blocks = []
@@ -101,7 +101,7 @@ def translate_srt_with_gemini(
     progress_bar.progress(min(1.0, (i + chunk_size) / total_blocks))
     status_placeholder.info(
         f"🇲🇲 Gemini ({model_name}) ဖြင့် ဘာသာပြန်နေစဉ်... ({start_block} မှ"
-        f" {end_block} / {total_blocks})"
+        f" {end_block} / {total_blocks} စာကြောင်းများ)"
     )
 
     prompt = f"""You are an elite subtitle translator specializing in Japanese anime, movies, and conversational dialogue.
@@ -139,7 +139,7 @@ SRT Content:
 
           translated_blocks.append(translated_chunk)
           chunk_success = True
-          time.sleep(3.5)
+          time.sleep(4)  # 15 RPM ကန့်သတ်ချက်ကို မကျော်စေရန် ၄ စက္ကန့် အနားပေးခြင်း
           break
 
         err_msg = str(res_json.get("error", {})).lower()
@@ -150,7 +150,7 @@ SRT Content:
         ):
           for sec in range(60, 0, -1):
             status_placeholder.warning(
-                f"⏳ Gemini Rate Limit ခေတ္တပြည့်သွားသဖြင့် စက္ကန့် {sec}"
+                f"⏳ Gemini Rate Limit ပြည့်သွားသဖြင့် စက္ကန့် {sec}"
                 f" စောင့်ဆိုင်းနေပါသည်... စက္ကန့်ပြည့်ပါက အပိုင်း ({start_block})"
                 " မှ ဆက်လက် ဘာသာပြန်ပါမည်။"
             )
@@ -166,7 +166,7 @@ SRT Content:
   return "\n\n".join(translated_blocks) + "\n\n"
 
 
-# 🔒 Secrets စစ်ဆေးခြင်း (Groq Key သာ မဖြစ်မနေ လိုအပ်သည်)
+# 🔒 Secrets စစ်ဆေးခြင်း
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 SECRET_GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
@@ -189,7 +189,7 @@ source_lang = st.sidebar.selectbox(
         "zh": "🇨🇳 တရုတ် (Chinese)",
         "auto": "🌐 အလိုအလျောက် မှတ်ယူရန် (Auto)",
     }.get(x, x),
-    index=0,  # ဂျပန်ကို မူလအဖြစ် ထားရှိသည်
+    index=0,
 )
 
 st.sidebar.markdown("---")
@@ -198,7 +198,7 @@ input_gemini_key = st.sidebar.text_input(
     "Gemini API Key (ရွေးချယ်နိုင်သည်):",
     value=SECRET_GEMINI_KEY,
     type="password",
-    help="Gemini Key မထည့်ထားပါက မူရင်း SRT ကိုသာ ထုတ်ယူနိုင်ပါမည်။",
+    help="Gemini Key ထည့်သွင်းထားပါက မြန်မာဘာသာသို့ တိုက်ရိုက်ပြန်ဆိုနိုင်ပါမည်။",
 )
 ACTIVE_GEMINI_KEY = input_gemini_key.strip() if input_gemini_key else ""
 
@@ -222,8 +222,7 @@ tab1, tab2 = st.tabs([
 with tab1:
   st.write(
       f"လက်ရှိ ရွေးထားသော မူရင်းဘာသာစကား - **{source_lang.upper()}** (Temperature=0.0"
-      " ဖြင့် အသံတိတ်/တီးလုံးပိုင်းများတွင် English အမှားများ မထွက်အောင်"
-      " ထိန်းချုပ်ထားပါသည်)"
+      " ဖြင့် ဂျပန်စကားပြောကို အတိအကျ ဖမ်းယူပါမည်)"
   )
 
   uploaded_media = st.file_uploader(
@@ -247,7 +246,6 @@ with tab1:
       compressed_audio_path = None
 
       try:
-        # ၂၄ MB ထက်ကြီးပါက အသံဖိုင် ချုံ့ခြင်း
         if os.path.getsize(tmp_file_path) > 24 * 1024 * 1024:
           st.info(
               "ဖိုင်ဆိုဒ်ကြီးသောကြောင့် အသံဖိုင်အဖြစ် ပြောင်းလဲချုံ့နေပါသည်..."
@@ -281,12 +279,11 @@ with tab1:
               "file": (os.path.basename(audio_path), audio_file.read()),
               "model": "whisper-large-v3",
               "response_format": "verbose_json",
-              "temperature": 0.0,  # စိတ်ကူးယဉ် အပိုစာသား မထွက်အောင် ပိတ်ပင်ခြင်း
+              "temperature": 0.0,
           }
 
           if source_lang == "ja":
             transcription_kwargs["language"] = "ja"
-            # ဂျပန်အသံမတိုင်မီ တီးလုံးသံများတွင် English စာသား မထွက်စေရန် လမ်းညွှန် Prompt
             transcription_kwargs["prompt"] = (
                 "こんにちは。これは日本語のアニメ・会話の音声です。音楽や無音部分で英語の字幕を出力しないでください。"
             )
@@ -334,7 +331,7 @@ with tab1:
 with tab2:
   st.write(
       "ဂျပန်စာ သို့မဟုတ် အင်္ဂလိပ်စာပါသော `.srt` ဖိုင်ကို တင်ပေးလိုက်ပါက Gemini က"
-      " စကားပြော အသုံးအနှုန်းအတိုင်း မြန်မာဘာသာသို့ သဘာဝကျကျ ပြန်ဆိုပေးပါမည်။"
+      " ၂၅ ကြောင်းစီ အစုလိုက် သဘာဝကျကျ မြန်မာပြန်ဆိုပေးပါမည်။"
   )
 
   uploaded_srt = st.file_uploader(
@@ -357,7 +354,7 @@ with tab2:
               ACTIVE_GEMINI_KEY,
               srt_text,
               model_name=selected_model,
-              chunk_size=15,
+              chunk_size=25,  # ၂၅ ကြောင်းစီ အစုလိုက် ပေးပို့ခြင်း
           )
 
   if st.session_state.trans_srt:
