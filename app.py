@@ -72,6 +72,7 @@ def json_to_srt(segments):
   return srt_output
 
 
+# Error များကို ပွင့်လင်းစွာ ပြသပေးမည့် Gemini Translation Function
 def translate_srt_with_gemini(
     api_key, raw_srt, model_name="gemini-2.5-flash", chunk_size=25
 ):
@@ -113,8 +114,10 @@ SRT Content:
 
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
+    max_attempts = 5
     chunk_success = False
-    while not chunk_success:
+
+    for attempt in range(max_attempts):
       try:
         response = requests.post(
             url, headers=headers, json=payload, timeout=60
@@ -133,12 +136,16 @@ SRT Content:
 
           translated_blocks.append(translated_chunk)
           chunk_success = True
-          time.sleep(4)
+          time.sleep(4)  # Rate Limit မထိစေရန် ၄ စက္ကန့် ပုံမှန် အနားပေးခြင်း
           break
 
-        err_msg = str(res_json.get("error", {})).lower()
+        err_data = res_json.get("error", {})
+        err_msg = str(err_data).lower()
+        err_display = err_data.get("message", str(err_data))
+
+        # 429 Rate limit ဖြစ်ပါက စက္ကန့် ၆၀ စောင့်ဆိုင်းခြင်း
         if (
-            "429" in err_msg
+            response.status_code == 429
             or "quota" in err_msg
             or "resource_exhausted" in err_msg
         ):
@@ -146,20 +153,36 @@ SRT Content:
             status_placeholder.warning(
                 f"⏳ Gemini Rate Limit ခေတ္တပြည့်သွားသဖြင့် စက္ကန့် {sec}"
                 f" စောင့်ဆိုင်းနေပါသည်... စက္ကန့်ပြည့်ပါက အပိုင်း ({start_block})"
-                " မှ ဆက်လက် ဘာသာပြန်ပါမည်။"
+                " မှ ပြန်လည်စတင်ပါမည်။"
             )
             time.sleep(1)
         else:
-          time.sleep(3)
+          # အခြား Error ဖြစ်ပါက Freeze မဖြစ်စေဘဲ ဘာကြောင့် မရကြောင်း ချက်ချင်း ပြသရပ်တန့်မည်
+          st.error(
+              f"❌ Google API Error ({response.status_code}): {err_display}"
+          )
+          progress_bar.empty()
+          status_placeholder.empty()
+          return None
 
-      except Exception:
+      except Exception as ex:
         time.sleep(3)
+
+    if not chunk_success:
+      st.error(
+          f"❌ အပိုင်း ({start_block} မှ {end_block}) ကို ၅ ကြိမ်တိုင်တိုင်"
+          " ကြိုးစားသော်လည်း မရရှိပါ။ Quota ကုန်သွားခြင်း ဖြစ်နိုင်ပါသည်။"
+      )
+      progress_bar.empty()
+      status_placeholder.empty()
+      return None
 
   progress_bar.empty()
   status_placeholder.empty()
   return "\n\n".join(translated_blocks) + "\n\n"
 
 
+# 🔒 Secrets စစ်ဆေးခြင်း
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 SECRET_GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
@@ -192,11 +215,12 @@ input_gemini_key = st.sidebar.text_input(
 )
 ACTIVE_GEMINI_KEY = input_gemini_key.strip() if input_gemini_key else ""
 
+# တည်ငြိမ်ပြီး Quota အများဆုံးရသော Flash Model များကို ရှေ့တန်းတင်ထားသည်
 gemini_models = [
     "gemini-2.5-flash",
     "gemini-1.5-flash",
-    "gemini-3-flash",
-    "gemini-3.5-flash-lite",
+    "gemini-2.5-pro",
+    "gemini-1.5-pro",
 ]
 selected_model = st.sidebar.selectbox(
     "🤖 Gemini Model ရွေးပါ:", gemini_models, index=0
@@ -313,12 +337,14 @@ with tab2:
     else:
       if st.button("🚀 Gemini ဖြင့် မြန်မာပြန်ဆိုမည်", key="btn_run_translate"):
         with st.spinner("Gemini ဖြင့် စာတန်းထိုးများကို ဘာသာပြန်နေပါသည်..."):
-          st.session_state.trans_srt = translate_srt_with_gemini(
+          result = translate_srt_with_gemini(
               ACTIVE_GEMINI_KEY,
               srt_text,
               model_name=selected_model,
-              chunk_size=25,  # ၂၅ ကြောင်းစီ အသေသတ်မှတ်ထားပါသည်
+              chunk_size=25,
           )
+          if result:
+            st.session_state.trans_srt = result
 
   if st.session_state.trans_srt:
     st.success("🎉 မြန်မာစာတန်းထိုး အောင်မြင်စွာ ရရှိပါပြီ!")
