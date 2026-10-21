@@ -8,9 +8,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="Myanmar Subtitle Studio (Anime & Movies)",
-    page_icon="🎬",
-    layout="centered",
+    page_title="Myanmar Subtitle Studio Pro", page_icon="🎬", layout="centered"
 )
 
 st.markdown(
@@ -29,10 +27,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("🎬 Subtitle Studio (Anime & Japanese)")
-st.caption(
-    "Groq Whisper (တိကျသော မူရင်းအသံဖမ်းယူမှု) + Google Gemini (သဘာဝကျသော မြန်မာပြန်)"
-)
+st.title("🎬 Myanmar Subtitle Studio Pro")
+st.caption("Groq Whisper + Gemini / Groq Multi-Engine Translation")
 
 # 🧠 Session State စနစ်
 if "raw_srt" not in st.session_state:
@@ -77,9 +73,9 @@ def json_to_srt(segments):
   return srt_output
 
 
-# Gemini ဖြင့် သဘာဝကျသော မြန်မာပြန်ဆိုမှု Function (chunk_size=25)
-def translate_srt_with_gemini(
-    api_key, raw_srt, model_name="gemini-2.5-flash", chunk_size=25
+# 🌐 ဘာသာပြန် Core Function (Gemini ရော Groq ပါ ပံ့ပိုးသည်)
+def translate_srt(
+    engine, api_key, raw_srt, model_name, chunk_size=25, groq_client=None
 ):
   blocks = [b.strip() for b in raw_srt.strip().split("\n\n") if b.strip()]
   translated_blocks = []
@@ -88,8 +84,15 @@ def translate_srt_with_gemini(
   progress_bar = st.progress(0)
   status_placeholder = st.empty()
 
-  url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key.strip()}"
-  headers = {"Content-Type": "application/json"}
+  system_prompt = """You are an elite subtitle translator specializing in anime, movies, and conversational dialogue.
+Translate the following SRT subtitles into fluent, natural, and expressive Burmese (Myanmar language).
+
+TRANSLATION GUIDELINES:
+1. Do NOT translate word-by-word literally. Capture the true emotion, tone, politeness level, and conversational context suitable for movie subtitles.
+2. Maintain the exact same SRT sequence numbers and timestamps.
+3. Only translate the dialogue text lines into Burmese.
+4. If a line is too long, wrap it into two balanced lines using a single newline (\\n).
+5. Output pure SRT only without markdown formatting, code ticks (```), or introductory notes."""
 
   for i in range(0, total_blocks, chunk_size):
     chunk_blocks = blocks[i : i + chunk_size]
@@ -100,65 +103,69 @@ def translate_srt_with_gemini(
 
     progress_bar.progress(min(1.0, (i + chunk_size) / total_blocks))
     status_placeholder.info(
-        f"🇲🇲 Gemini ({model_name}) ဖြင့် ဘာသာပြန်နေစဉ်... ({start_block} မှ"
+        f"🇲🇲 {engine} ({model_name}) ဖြင့် ဘာသာပြန်နေစဉ်... ({start_block} မှ"
         f" {end_block} / {total_blocks} စာကြောင်းများ)"
     )
-
-    prompt = f"""You are an elite subtitle translator specializing in Japanese anime, movies, and conversational dialogue.
-Translate the following SRT subtitles (Japanese Kanji/Kana or English) into fluent, natural, and expressive Burmese (Myanmar language).
-
-TRANSLATION GUIDELINES:
-1. Do NOT translate word-by-word literally. Capture the true emotion, tone, politeness level, and context suitable for anime/movie subtitles.
-2. Maintain the exact same SRT sequence numbers and timestamps.
-3. Only translate the dialogue text lines into Burmese.
-4. If a line is too long, wrap it into two balanced lines using a single newline (\\n).
-5. Output pure SRT only without markdown formatting, code ticks (```), or introductory notes.
-
-SRT Content:
-{chunk_text}"""
-
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
     chunk_success = False
     while not chunk_success:
       try:
-        response = requests.post(
-            url, headers=headers, json=payload, timeout=60
-        )
-        res_json = response.json()
+        if engine == "Google Gemini":
+          url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model_name}:generateContent?key={api_key.strip()}"
+          headers = {"Content-Type": "application/json"}
+          prompt = f"{system_prompt}\n\nSRT Content:\n{chunk_text}"
+          payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
-        if response.status_code == 200:
-          translated_chunk = res_json["candidates"][0]["content"]["parts"][0][
-              "text"
-          ].strip()
+          response = requests.post(
+              url, headers=headers, json=payload, timeout=60
+          )
+          res_json = response.json()
+
+          if response.status_code == 200:
+            translated_chunk = res_json["candidates"][0]["content"]["parts"][0][
+                "text"
+            ].strip()
+            chunk_success = True
+            time.sleep(3.5)
+          else:
+            err_msg = str(res_json.get("error", {})).lower()
+            if (
+                "429" in err_msg
+                or "quota" in err_msg
+                or "resource_exhausted" in err_msg
+            ):
+              for sec in range(60, 0, -1):
+                status_placeholder.warning(
+                    f"⏳ Gemini Rate Limit ခေတ္တစောင့်ဆိုင်းနေပါသည်... စက္ကန့် {sec}"
+                )
+                time.sleep(1)
+            else:
+              time.sleep(3)
+
+        else:  # Groq Engine
+          response = groq_client.chat.completions.create(
+              model=model_name,
+              messages=[
+                  {"role": "system", "content": system_prompt},
+                  {"role": "user", "content": chunk_text},
+              ],
+              temperature=0.3,
+          )
+          translated_chunk = response.choices[0].message.content.strip()
+          chunk_success = True
+          time.sleep(1)
+
+        if chunk_success:
+          # Markdown code block များ ရှင်းလင်းခြင်း
           if translated_chunk.startswith("```"):
             lines = translated_chunk.split("\n")
             translated_chunk = "\n".join(
                 [line for line in lines if not line.strip().startswith("```")]
             ).strip()
-
           translated_blocks.append(translated_chunk)
-          chunk_success = True
-          time.sleep(4)  # 15 RPM ကန့်သတ်ချက်ကို မကျော်စေရန် ၄ စက္ကန့် အနားပေးခြင်း
           break
 
-        err_msg = str(res_json.get("error", {})).lower()
-        if (
-            "429" in err_msg
-            or "quota" in err_msg
-            or "resource_exhausted" in err_msg
-        ):
-          for sec in range(60, 0, -1):
-            status_placeholder.warning(
-                f"⏳ Gemini Rate Limit ပြည့်သွားသဖြင့် စက္ကန့် {sec}"
-                f" စောင့်ဆိုင်းနေပါသည်... စက္ကန့်ပြည့်ပါက အပိုင်း ({start_block})"
-                " မှ ဆက်လက် ဘာသာပြန်ပါမည်။"
-            )
-            time.sleep(1)
-        else:
-          time.sleep(3)
-
-      except Exception:
+      except Exception as ex:
         time.sleep(3)
 
   progress_bar.empty()
@@ -177,7 +184,9 @@ if not GROQ_API_KEY:
   )
   st.stop()
 
-# ⚙️ Sidebar Configurations
+groq_client = Groq(api_key=GROQ_API_KEY.strip())
+
+# ⚙️ SIDEBAR CONFIGURATIONS
 st.sidebar.header("🌐 မူရင်း ဘာသာစကား သတ်မှတ်ခြင်း")
 source_lang = st.sidebar.selectbox(
     "ဗီဒီယို/အသံဖိုင်ထဲက မူရင်းစကားပြော:",
@@ -193,36 +202,70 @@ source_lang = st.sidebar.selectbox(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.header("🔑 ဘာသာပြန် API စနစ်")
-input_gemini_key = st.sidebar.text_input(
-    "Gemini API Key (ရွေးချယ်နိုင်သည်):",
-    value=SECRET_GEMINI_KEY,
-    type="password",
-    help="Gemini Key ထည့်သွင်းထားပါက မြန်မာဘာသာသို့ တိုက်ရိုက်ပြန်ဆိုနိုင်ပါမည်။",
-)
-ACTIVE_GEMINI_KEY = input_gemini_key.strip() if input_gemini_key else ""
+st.sidebar.header("⚙️ ဘာသာပြန် Engine & Settings")
 
-available_gemini_models = [
-    "gemini-2.5-flash",
-    "gemini-1.5-flash",
-    "gemini-3-flash",
-    "gemini-3.5-flash-lite",
-]
-selected_model = st.sidebar.selectbox(
-    "🤖 Gemini Model ရွေးပါ:", available_gemini_models, index=0
+# ၁။ Engine ရွေးချယ်ခြင်း
+translation_engine = st.sidebar.radio(
+    "ဘာသာပြန်မည့် စနစ်ကို ရွေးပါ:",
+    ["Google Gemini", "Groq AI (Free)"],
+    index=0,
 )
+
+# ၂။ Chunk Size Slider (Default 25 အတိအကျ သတ်မှတ်ထားသည်)
+selected_chunk_size = st.sidebar.slider(
+    "📏 Chunk Size (တစ်ကြိမ်ပို့မည့် စာကြောင်းအရေအတွက်):",
+    min_value=10,
+    max_value=100,
+    value=25,
+    step=5,
+    help="Default ၂၅ ကြောင်းစီ ပို့ပါမည်။ လိုအပ်ပါက အတိုးအလျှော့ ပြုလုပ်နိုင်ပါသည်။",
+)
+
+# ၃။ Models စာရင်း အပြည့်အစုံ
+if translation_engine == "Google Gemini":
+  input_gemini_key = st.sidebar.text_input(
+      "Gemini API Key:",
+      value=SECRET_GEMINI_KEY,
+      type="password",
+      help="Gemini Key ထည့်သွင်းထားမှသာ Gemini ဖြင့် ဘာသာပြန်နိုင်ပါမည်။",
+  )
+  ACTIVE_GEMINI_KEY = input_gemini_key.strip() if input_gemini_key else ""
+
+  gemini_models = [
+      "gemini-2.5-flash",
+      "gemini-1.5-flash",
+      "gemini-2.5-pro",
+      "gemini-1.5-pro",
+      "gemini-3-flash",
+      "gemini-3.5-flash-lite",
+  ]
+  selected_model = st.sidebar.selectbox(
+      "🤖 Gemini Model ရွေးပါ:", gemini_models, index=0
+  )
+else:
+  groq_models = [
+      "qwen/qwen3.8-27b",
+      "openai/gpt-oss-20b",
+      "llama-3.3-70b-versatile",
+      "llama-3.1-8b-instant",
+      "openai/gpt-oss-120b",
+  ]
+  selected_model = st.sidebar.selectbox(
+      "🤖 Groq Model ရွေးပါ:", groq_models, index=0
+  )
+  ACTIVE_GEMINI_KEY = ""
 
 # 📑 Tabs
 tab1, tab2 = st.tabs([
     "🎙️ ၁။ ဗီဒီယိုမှ မူရင်း စာတန်းထိုး ထုတ်ယူခြင်း (Groq)",
-    "🇲🇲 ၂။ SRT ဖိုင်တင်ပြီး မြန်မာပြန်ဆိုခြင်း (Gemini)",
+    "🇲🇲 ၂။ SRT ဖိုင်တင်ပြီး မြန်မာပြန်ဆိုခြင်း (Gemini / Groq)",
 ])
 
 # ================= TAB 1: GROQ WHISPER =================
 with tab1:
   st.write(
-      f"လက်ရှိ ရွေးထားသော မူရင်းဘာသာစကား - **{source_lang.upper()}** (Temperature=0.0"
-      " ဖြင့် ဂျပန်စကားပြောကို အတိအကျ ဖမ်းယူပါမည်)"
+      f"လက်ရှိ ဘာသာစကား - **{source_lang.upper()}** (Temperature=0.0 ဖြင့်"
+      " အသံတိတ်ပိုင်း အင်္ဂလိပ်စာအလွဲများ လုံးဝ မထွက်အောင် ဖမ်းယူပါမည်)"
   )
 
   uploaded_media = st.file_uploader(
@@ -272,7 +315,6 @@ with tab1:
           audio_path = compressed_audio_path
 
         st.info("🎙️ Groq Whisper-Large-v3 ဖြင့် အသံဖမ်းယူနေပါသည်...")
-        groq_client = Groq(api_key=GROQ_API_KEY.strip())
 
         with open(audio_path, "rb") as audio_file:
           transcription_kwargs = {
@@ -285,7 +327,7 @@ with tab1:
           if source_lang == "ja":
             transcription_kwargs["language"] = "ja"
             transcription_kwargs["prompt"] = (
-                "こんにちは。これは日本語のアニメ・会話の音声です。音楽や無音部分で英語の字幕を出力しないでください。"
+                "こんにちは。これは日本語のアニメ・会話の音声です。音楽や無音部分で英語を出力しないでください。"
             )
           elif source_lang != "auto":
             transcription_kwargs["language"] = source_lang
@@ -327,11 +369,11 @@ with tab1:
           key="preview_raw",
       )
 
-# ================= TAB 2: GEMINI TRANSLATOR =================
+# ================= TAB 2: TRANSLATOR =================
 with tab2:
   st.write(
-      "ဂျပန်စာ သို့မဟုတ် အင်္ဂလိပ်စာပါသော `.srt` ဖိုင်ကို တင်ပေးလိုက်ပါက Gemini က"
-      " ၂၅ ကြောင်းစီ အစုလိုက် သဘာဝကျကျ မြန်မာပြန်ဆိုပေးပါမည်။"
+      f"ရွေးချယ်ထားသော စနစ် - **{translation_engine}** | Model -"
+      f" **{selected_model}** | Chunk Size - **{selected_chunk_size} ကြောင်းစီ**"
   )
 
   uploaded_srt = st.file_uploader(
@@ -341,20 +383,21 @@ with tab2:
   if uploaded_srt:
     srt_text = uploaded_srt.read().decode("utf-8", errors="ignore")
 
-    if not ACTIVE_GEMINI_KEY:
+    if translation_engine == "Google Gemini" and not ACTIVE_GEMINI_KEY:
       st.warning(
           "⚠️ Gemini API Key မရှိသေးပါ။ ဘယ်ဘက် Sidebar တွင် Gemini Key"
-          " ထည့်သွင်းပေးပါ။ (သို့မဟုတ် အဆိုပါ SRT ဖိုင်ကို Chat ထဲသို့ ပို့၍"
-          " အခမဲ့ ဘာသာပြန်ခိုင်းနိုင်ပါသည်)"
+          " ထည့်သွင်းပေးပါ (သို့မဟုတ် Engine ကို Groq AI (Free) သို့ ပြောင်းပါ)။"
       )
     else:
-      if st.button("🚀 Gemini ဖြင့် မြန်မာပြန်ဆိုမည်", key="btn_run_translate"):
-        with st.spinner("Gemini ဖြင့် စာတန်းထိုးများကို ဘာသာပြန်နေပါသည်..."):
-          st.session_state.trans_srt = translate_srt_with_gemini(
-              ACTIVE_GEMINI_KEY,
-              srt_text,
+      if st.button("🚀 မြန်မာဘာသာသို့ ပြန်ဆိုမည်", key="btn_run_translate"):
+        with st.spinner(f"{translation_engine} ဖြင့် ဘာသာပြန်နေပါသည်..."):
+          st.session_state.trans_srt = translate_srt(
+              engine=translation_engine,
+              api_key=ACTIVE_GEMINI_KEY,
+              raw_srt=srt_text,
               model_name=selected_model,
-              chunk_size=25,  # ၂၅ ကြောင်းစီ အစုလိုက် ပေးပို့ခြင်း
+              chunk_size=selected_chunk_size,
+              groq_client=groq_client,
           )
 
   if st.session_state.trans_srt:
