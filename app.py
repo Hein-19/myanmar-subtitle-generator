@@ -29,10 +29,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("🎬 Subtitle Studio (Japanese / Multi-Language)")
+st.title("🎬 Subtitle Studio (Anime & Japanese)")
 st.caption(
-    "Groq Whisper-Large-v3 (အသံဖမ်းယူမှု) + Google Gemini (သဘာဝကျသော"
-    " မြန်မာပြန်ဆိုမှု)"
+    "Groq Whisper (တိကျသော မူရင်းအသံဖမ်းယူမှု) + Google Gemini (သဘာဝကျသော မြန်မာပြန်)"
 )
 
 # 🧠 Session State စနစ်
@@ -78,6 +77,7 @@ def json_to_srt(segments):
   return srt_output
 
 
+# Gemini ဖြင့် သဘာဝကျသော မြန်မာပြန်ဆိုမှု Function
 def translate_srt_with_gemini(
     api_key, raw_srt, model_name="gemini-2.5-flash", chunk_size=15
 ):
@@ -110,9 +110,9 @@ Translate the following SRT subtitles (Japanese Kanji/Kana or English) into flue
 TRANSLATION GUIDELINES:
 1. Do NOT translate word-by-word literally. Capture the true emotion, tone, politeness level, and context suitable for anime/movie subtitles.
 2. Maintain the exact same SRT sequence numbers and timestamps.
-3. Only translate the dialogue text into Burmese.
+3. Only translate the dialogue text lines into Burmese.
 4. If a line is too long, wrap it into two balanced lines using a single newline (\\n).
-5. Output pure SRT only without markdown formatting, code ticks, or introductory notes.
+5. Output pure SRT only without markdown formatting, code ticks (```), or introductory notes.
 
 SRT Content:
 {chunk_text}"""
@@ -131,7 +131,6 @@ SRT Content:
           translated_chunk = res_json["candidates"][0]["content"]["parts"][0][
               "text"
           ].strip()
-          # Markdown code block များ ပါလာပါက ရှင်းထုတ်ခြင်း
           if translated_chunk.startswith("```"):
             lines = translated_chunk.split("\n")
             translated_chunk = "\n".join(
@@ -167,7 +166,7 @@ SRT Content:
   return "\n\n".join(translated_blocks) + "\n\n"
 
 
-# 🔒 Secrets စစ်ဆေးခြင်း
+# 🔒 Secrets စစ်ဆေးခြင်း (Groq Key သာ မဖြစ်မနေ လိုအပ်သည်)
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 SECRET_GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
@@ -181,7 +180,7 @@ if not GROQ_API_KEY:
 # ⚙️ Sidebar Configurations
 st.sidebar.header("🌐 မူရင်း ဘာသာစကား သတ်မှတ်ခြင်း")
 source_lang = st.sidebar.selectbox(
-    "ဗီဒီယို/အသံဖိုင်ထဲက စကားပြော ဘာသာစကား:",
+    "ဗီဒီယို/အသံဖိုင်ထဲက မူရင်းစကားပြော:",
     options=["ja", "en", "ko", "zh", "auto"],
     format_func=lambda x: {
         "ja": "🇯🇵 ဂျပန် (Japanese)",
@@ -190,7 +189,7 @@ source_lang = st.sidebar.selectbox(
         "zh": "🇨🇳 တရုတ် (Chinese)",
         "auto": "🌐 အလိုအလျောက် မှတ်ယူရန် (Auto)",
     }.get(x, x),
-    index=0,  # ဂျပန်ဘာသာစကားကို မူလအဖြစ် ဦးစားပေးထားသည်
+    index=0,  # ဂျပန်ကို မူလအဖြစ် ထားရှိသည်
 )
 
 st.sidebar.markdown("---")
@@ -199,7 +198,7 @@ input_gemini_key = st.sidebar.text_input(
     "Gemini API Key (ရွေးချယ်နိုင်သည်):",
     value=SECRET_GEMINI_KEY,
     type="password",
-    help="Gemini Key ထည့်သွင်းထားပါက မြန်မာဘာသာသို့ တိုက်ရိုက်ပြန်ဆိုနိုင်ပါမည်။",
+    help="Gemini Key မထည့်ထားပါက မူရင်း SRT ကိုသာ ထုတ်ယူနိုင်ပါမည်။",
 )
 ACTIVE_GEMINI_KEY = input_gemini_key.strip() if input_gemini_key else ""
 
@@ -215,16 +214,16 @@ selected_model = st.sidebar.selectbox(
 
 # 📑 Tabs
 tab1, tab2 = st.tabs([
-    "🎙️ ၁။ ဗီဒီယိုမှ မူရင်း စာတန်းထိုး ထုတ်ယူခြင်း (Groq Whisper)",
+    "🎙️ ၁။ ဗီဒီယိုမှ မူရင်း စာတန်းထိုး ထုတ်ယူခြင်း (Groq)",
     "🇲🇲 ၂။ SRT ဖိုင်တင်ပြီး မြန်မာပြန်ဆိုခြင်း (Gemini)",
 ])
 
 # ================= TAB 1: GROQ WHISPER =================
 with tab1:
   st.write(
-      f"လက်ရှိ ရွေးချယ်ထားသော ဘာသာစကား - **{source_lang.upper()}** (ဂျပန်စကားပြောကို"
-      " အင်္ဂလိပ်လို အဓိပ္ပာယ်မဲ့ မပြောင်းဘဲ မူရင်းစကားလုံးအတိုင်း တိကျစွာ"
-      " ဖမ်းယူပေးပါမည်)"
+      f"လက်ရှိ ရွေးထားသော မူရင်းဘာသာစကား - **{source_lang.upper()}** (Temperature=0.0"
+      " ဖြင့် အသံတိတ်/တီးလုံးပိုင်းများတွင် English အမှားများ မထွက်အောင်"
+      " ထိန်းချုပ်ထားပါသည်)"
   )
 
   uploaded_media = st.file_uploader(
@@ -248,6 +247,7 @@ with tab1:
       compressed_audio_path = None
 
       try:
+        # ၂၄ MB ထက်ကြီးပါက အသံဖိုင် ချုံ့ခြင်း
         if os.path.getsize(tmp_file_path) > 24 * 1024 * 1024:
           st.info(
               "ဖိုင်ဆိုဒ်ကြီးသောကြောင့် အသံဖိုင်အဖြစ် ပြောင်းလဲချုံ့နေပါသည်..."
@@ -276,17 +276,26 @@ with tab1:
         st.info("🎙️ Groq Whisper-Large-v3 ဖြင့် အသံဖမ်းယူနေပါသည်...")
         groq_client = Groq(api_key=GROQ_API_KEY.strip())
 
-        transcription_kwargs = {
-            "file": (audio_path, open(audio_path, "rb").read()),
-            "model": "whisper-large-v3",
-            "response_format": "verbose_json",
-        }
-        if source_lang != "auto":
-          transcription_kwargs["language"] = source_lang
+        with open(audio_path, "rb") as audio_file:
+          transcription_kwargs = {
+              "file": (os.path.basename(audio_path), audio_file.read()),
+              "model": "whisper-large-v3",
+              "response_format": "verbose_json",
+              "temperature": 0.0,  # စိတ်ကူးယဉ် အပိုစာသား မထွက်အောင် ပိတ်ပင်ခြင်း
+          }
 
-        transcription = groq_client.audio.transcriptions.create(
-            **transcription_kwargs
-        )
+          if source_lang == "ja":
+            transcription_kwargs["language"] = "ja"
+            # ဂျပန်အသံမတိုင်မီ တီးလုံးသံများတွင် English စာသား မထွက်စေရန် လမ်းညွှန် Prompt
+            transcription_kwargs["prompt"] = (
+                "こんにちは。これは日本語のアニメ・会話の音声です。音楽や無音部分で英語の字幕を出力しないでください。"
+            )
+          elif source_lang != "auto":
+            transcription_kwargs["language"] = source_lang
+
+          transcription = groq_client.audio.transcriptions.create(
+              **transcription_kwargs
+          )
 
         segments = (
             transcription.segments
@@ -325,8 +334,7 @@ with tab1:
 with tab2:
   st.write(
       "ဂျပန်စာ သို့မဟုတ် အင်္ဂလိပ်စာပါသော `.srt` ဖိုင်ကို တင်ပေးလိုက်ပါက Gemini က"
-      " Anime/ရုပ်ရှင် စကားပြော အသုံးအနှုန်းအတိုင်း မြန်မာဘာသာသို့"
-      " သဘာဝကျကျ ပြန်ဆိုပေးပါမည်။"
+      " စကားပြော အသုံးအနှုန်းအတိုင်း မြန်မာဘာသာသို့ သဘာဝကျကျ ပြန်ဆိုပေးပါမည်။"
   )
 
   uploaded_srt = st.file_uploader(
