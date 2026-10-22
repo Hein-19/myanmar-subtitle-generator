@@ -27,8 +27,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("🎬 Myanmar Subtitle Studio (OpenRouter)")
-st.caption("Groq Whisper + OpenRouter Free Models Translation")
+st.title("🎬 Myanmar Subtitle Studio (Optimized Token)")
+st.caption("Groq Whisper + OpenRouter (Timestamp Stripping for Token Saving)")
 
 if "raw_srt" not in st.session_state:
   st.session_state.raw_srt = None
@@ -75,16 +75,28 @@ def json_to_srt(segments):
 def translate_srt_with_openrouter(
     api_key,
     raw_srt,
-    model_name="minimax/minimax-m3.1-flash:free",
-    chunk_size=25,
+    model_name="deepseek/deepseek-v4.1-flash",
+    chunk_size=30,
 ):
-  blocks = [b.strip() for b in raw_srt.strip().split("\n\n") if b.strip()]
+  raw_blocks = [b.strip() for b in raw_srt.strip().split("\n\n") if b.strip()]
+  compact_items = []
+  timestamp_map = {}
+
+  # Timestamp များကို ဖယ်ရှားပြီး နံပါတ်စဉ်နှင့် စာသားကိုသာ ပြင်ဆင်ခြင်း
+  for block in raw_blocks:
+    lines = block.split("\n")
+    if len(lines) >= 3:
+      idx = lines[0].strip()
+      timestamp = lines[1].strip()
+      text = "\n".join(lines[2:]).strip()
+      timestamp_map[idx] = timestamp
+      compact_items.append(f"{idx}: {text}")
+
   translated_blocks = []
-  total_blocks = len(blocks)
+  total_items = len(compact_items)
 
   progress_bar = st.progress(0)
   status_placeholder = st.empty()
-  # မျက်နှာပြင်ပေါ်မှာ Live တိုက်ရိုက်ပြပေးမည့် Placeholder
   live_preview_box = st.empty()
 
   url = "https://openrouter.ai/api/v1/chat/completions"
@@ -94,25 +106,23 @@ def translate_srt_with_openrouter(
   }
 
   system_prompt = """You are an elite subtitle translator specializing in Japanese anime, movies, and conversational dialogue.
-Translate the following SRT subtitles into fluent, natural, and expressive Burmese (Myanmar language).
+Translate the dialogue text after the colon (:) into fluent, natural, and expressive Burmese (Myanmar language).
+CRITICAL RULES:
+1. Keep the exact same sequence numbers (e.g., 1:, 2:, etc.) at the start of each line.
+2. Do NOT change or remove the sequence numbers.
+3. Output only the translated numbered lines without code ticks or markdown formatting."""
 
-TRANSLATION GUIDELINES:
-1. Do NOT translate word-by-word literally. Capture the true emotion, tone, and context.
-2. Maintain the exact same SRT sequence numbers and timestamps.
-3. Only translate the dialogue text lines into Burmese.
-4. Output pure SRT only without markdown formatting or code ticks (```)."""
+  for i in range(0, total_items, chunk_size):
+    chunk_list = compact_items[i : i + chunk_size]
+    chunk_text = "\n".join(chunk_list)
 
-  for i in range(0, total_blocks, chunk_size):
-    chunk_blocks = blocks[i : i + chunk_size]
-    chunk_text = "\n\n".join(chunk_blocks)
+    start_idx = i + 1
+    end_idx = min(i + chunk_size, total_items)
 
-    start_block = i + 1
-    end_block = min(i + chunk_size, total_blocks)
-
-    progress_bar.progress(min(1.0, (i + chunk_size) / total_blocks))
+    progress_bar.progress(min(1.0, end_idx / total_items))
     status_placeholder.info(
-        f"🇲🇲 OpenRouter ({model_name}) ဖြင့် ဘာသာပြန်နေစဉ်... ({start_block}"
-        f" မှ {end_block} / {total_blocks} စာကြောင်းများ)"
+        f"🇲🇲 OpenRouter ({model_name}) ဖြင့် ဘာသာပြန်နေစဉ်... ({start_idx}"
+        f" မှ {end_idx} / {total_items} စာကြောင်းများ)"
     )
 
     payload = {
@@ -121,7 +131,7 @@ TRANSLATION GUIDELINES:
             {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": f"SRT Content:\n{chunk_text}",
+                "content": f"Translate these:\n{chunk_text}",
             },
         ],
     }
@@ -136,39 +146,49 @@ TRANSLATION GUIDELINES:
 
         if response.status_code == 200:
           if "choices" in res_json and len(res_json["choices"]) > 0:
-            translated_chunk = (
-                res_json["choices"][0]["message"]["content"].strip()
-            )
-            if translated_chunk.startswith("```"):
-              lines = translated_chunk.split("\n")
-              translated_chunk = "\n".join([
+            content = res_json["choices"][0]["message"]["content"].strip()
+            if content.startswith("```"):
+              lines = content.split("\n")
+              content = "\n".join([
                   line for line in lines if not line.strip().startswith("```")
               ]).strip()
 
-            translated_blocks.append(translated_chunk)
+            translated_blocks.append(content)
 
-            # ရောက်သမျှကို Session State နဲ့ Live Box ထဲ ချက်ချင်းထည့်မည်
-            current_so_far = "\n\n".join(translated_blocks) + "\n\n"
-            st.session_state.trans_srt = current_so_far
+            # မူရင်း Timestamp များနှင့် ပြန်လည် ပေါင်းစပ်ခြင်း
+            full_trans_text = "\n".join(translated_blocks)
+            reconstructed_srt = ""
+
+            for line in full_trans_text.split("\n"):
+              if ":" in line:
+                parts = line.split(":", 1)
+                idx = parts[0].strip()
+                trans_text = parts[1].strip()
+                if idx in timestamp_map:
+                  reconstructed_srt += (
+                      f"{idx}\n{timestamp_map[idx]}\n{trans_text}\n\n"
+                  )
+
+            st.session_state.trans_srt = reconstructed_srt
             live_preview_box.text_area(
                 "📝 Live Translated Preview (ဘာသာပြန်ပြီးသမျှ)",
-                current_so_far,
+                reconstructed_srt,
                 height=220,
             )
 
             chunk_success = True
-            time.sleep(2)
+            time.sleep(1)
             break
           else:
-            time.sleep(3)
+            time.sleep(2)
         else:
-          time.sleep(3)
+          time.sleep(2)
       except Exception:
-        time.sleep(3)
+        time.sleep(2)
 
     if not chunk_success:
       st.warning(
-          f"⚠️ အပိုင်း ({start_block} မှ {end_block}) တွင် အခက်အခဲရှိသဖြင့်"
+          f"⚠️ အပိုင်း ({start_idx} မှ {end_idx}) တွင် အခက်အခဲရှိသဖြင့်"
           " ပြီးသမျှ အပိုင်းများကို ဆက်လက် ထိန်းသိမ်းထားပါသည်။"
       )
       break
@@ -212,18 +232,19 @@ ACTIVE_OPENROUTER_KEY = (
 
 selected_chunk_size = st.sidebar.slider(
     "📏 Chunk Size (တစ်ကြိမ်ပို့မည့် စာကြောင်းရေ):",
-    min_value=10,
-    max_value=50,
-    value=25,
+    min_value=15,
+    max_value=60,
+    value=30,
     step=5,
 )
 
 openrouter_models = [
+    "deepseek/deepseek-v4.1-flash",
     "minimax/minimax-m3.1-flash:free",
     "recursive/flint:free",
 ]
 selected_model = st.sidebar.selectbox(
-    "🤖 OpenRouter Free Model ရွေးပါ:", openrouter_models, index=0
+    "🤖 OpenRouter Model ရွေးပါ:", openrouter_models, index=0
 )
 
 tab1, tab2 = st.tabs([
@@ -321,8 +342,8 @@ with tab1:
 
 with tab2:
   st.write(
-      "OpenRouter Free မော်ဒယ်ဖြင့် စာတန်းထိုးများကို မြန်မာလို ဘာသာပြန်မည်"
-      " (ဘာသာပြန်နေစဉ် Live ကြည့်ရှုနိုင်သည်)"
+      "OpenRouter ဖြင့် စာတန်းထိုးများကို မြန်မာလို ဘာသာပြန်မည် (Token"
+      " သက်သာစေရန် Timestamp များကို ခေတ္တဖယ်ရှားပြီး ပို့ဆောင်သည်)"
   )
   uploaded_srt = st.file_uploader(
       "SRT ဖိုင် တင်ပါ (.srt)", type=["srt"], key="srt_uploader"
@@ -342,13 +363,12 @@ with tab2:
               chunk_size=selected_chunk_size,
           )
 
-  # အချိန်မရွေး ဒေါင်းလုဒ်ဆွဲနိုင်သော ခလုတ်
   if st.session_state.trans_srt:
     st.success("🎉 မြန်မာစာတန်းထိုးများ ရရှိနေပါပြီ!")
     st.download_button(
         label="📥 လက်ရှိရောက်သမျှ မြန်မာ SRT (.srt) ဒေါင်းလုဒ်",
         data=st.session_state.trans_srt,
-        file_name="burmese_subtitles_partial.srt",
+        file_name="burmese_subtitles_optimized.srt",
         mime="text/plain",
         key="btn_dl_trans_tab2",
     )
