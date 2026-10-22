@@ -27,8 +27,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("🎬 Myanmar Subtitle Studio (Optimized Token)")
-st.caption("Groq Whisper + OpenRouter (Timestamp Stripping for Token Saving)")
+st.title("🎬 Myanmar Subtitle Studio (Secrets Config)")
+st.caption("Groq Whisper + OpenRouter (Optimized Token & Secrets API)")
 
 if "raw_srt" not in st.session_state:
   st.session_state.raw_srt = None
@@ -82,7 +82,6 @@ def translate_srt_with_openrouter(
   compact_items = []
   timestamp_map = {}
 
-  # Timestamp များကို ဖယ်ရှားပြီး နံပါတ်စဉ်နှင့် စာသားကိုသာ ပြင်ဆင်ခြင်း
   for block in raw_blocks:
     lines = block.split("\n")
     if len(lines) >= 3:
@@ -155,7 +154,6 @@ CRITICAL RULES:
 
             translated_blocks.append(content)
 
-            # မူရင်း Timestamp များနှင့် ပြန်လည် ပေါင်းစပ်ခြင်း
             full_trans_text = "\n".join(translated_blocks)
             reconstructed_srt = ""
 
@@ -182,7 +180,7 @@ CRITICAL RULES:
           else:
             time.sleep(2)
         else:
-          time.sleep(2)
+            time.sleep(2)
       except Exception:
         time.sleep(2)
 
@@ -198,10 +196,15 @@ CRITICAL RULES:
   return st.session_state.trans_srt
 
 
+# Streamlit Secrets မှ API Key များ ရယူခြင်း
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
 
-if not GROQ_API_KEY:
-  st.error("⚠️ Streamlit Secrets ထဲတွင် GROQ_API_KEY မတွေ့ရှိပါ။")
+if not GROQ_API_KEY or not OPENROUTER_API_KEY:
+  st.error(
+      "⚠️ Streamlit Secrets တွင် GROQ_API_KEY သို့မဟုတ် OPENROUTER_API_KEY"
+      " တစ်ခုခု חေပ်နေပါသည်။"
+  )
   st.stop()
 
 groq_client = Groq(api_key=GROQ_API_KEY.strip())
@@ -222,14 +225,7 @@ source_lang = st.sidebar.selectbox(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.header("🔑 OpenRouter ဆက်တင်များ")
-input_openrouter_key = st.sidebar.text_input(
-    "OpenRouter API Key:", type="password"
-)
-ACTIVE_OPENROUTER_KEY = (
-    input_openrouter_key.strip() if input_openrouter_key else ""
-)
-
+st.sidebar.header("🤖 မော်ဒယ် ဆက်တင်များ")
 selected_chunk_size = st.sidebar.slider(
     "📏 Chunk Size (တစ်ကြိမ်ပို့မည့် စာကြောင်းရေ):",
     min_value=15,
@@ -342,8 +338,8 @@ with tab1:
 
 with tab2:
   st.write(
-      "OpenRouter ဖြင့် စာတန်းထိုးများကို မြန်မာလို ဘာသာပြန်မည် (Token"
-      " သက်သာစေရန် Timestamp များကို ခေတ္တဖယ်ရှားပြီး ပို့ဆောင်သည်)"
+      "OpenRouter ဖြင့် စာတန်းထိုးများကို မြန်မာလို ဘာသာပြန်မည် (Secrets"
+      " API Key အသုံးပြုထားသည်)"
   )
   uploaded_srt = st.file_uploader(
       "SRT ဖိုင် တင်ပါ (.srt)", type=["srt"], key="srt_uploader"
@@ -351,24 +347,21 @@ with tab2:
 
   if uploaded_srt:
     srt_text = uploaded_srt.read().decode("utf-8", errors="ignore")
-    if not ACTIVE_OPENROUTER_KEY:
-      st.warning("⚠️ ဘယ်ဘက် Sidebar တွင် OpenRouter API Key ထည့်သွင်းပေးပါ။")
-    else:
-      if st.button("🚀 OpenRouter ဖြင့် မြန်မာပြန်ဆိုမည်", key="btn_run_translate"):
-        with st.spinner("OpenRouter ဖြင့် ဘာသာပြန်နေပါသည်..."):
-          translate_srt_with_openrouter(
-              ACTIVE_OPENROUTER_KEY,
-              srt_text,
-              model_name=selected_model,
-              chunk_size=selected_chunk_size,
-          )
+    if st.button("🚀 OpenRouter ဖြင့် မြန်မာပြန်ဆိုမည်", key="btn_run_translate"):
+      with st.spinner("OpenRouter ဖြင့် ဘာသာပြန်နေပါသည်..."):
+        translate_srt_with_openrouter(
+            OPENROUTER_API_KEY,
+            srt_text,
+            model_name=selected_model,
+            chunk_size=selected_chunk_size,
+        )
 
   if st.session_state.trans_srt:
     st.success("🎉 မြန်မာစာတန်းထိုးများ ရရှိနေပါပြီ!")
     st.download_button(
         label="📥 လက်ရှိရောက်သမျှ မြန်မာ SRT (.srt) ဒေါင်းလုဒ်",
         data=st.session_state.trans_srt,
-        file_name="burmese_subtitles_optimized.srt",
+        file_name="burmese_subtitles_secrets.srt",
         mime="text/plain",
         key="btn_dl_trans_tab2",
     )
