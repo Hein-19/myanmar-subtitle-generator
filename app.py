@@ -72,6 +72,7 @@ def json_to_srt(segments):
   return srt_output
 
 
+# ဘာသာပြန်ပြီးသမျှကို အပိုင်းလိုက် Session State ထဲ ချက်ချင်း သိမ်းဆည်းမည့် Function
 def translate_srt_with_openrouter(
     api_key,
     raw_srt,
@@ -144,6 +145,10 @@ TRANSLATION GUIDELINES:
               ]).strip()
 
             translated_blocks.append(translated_chunk)
+            # အပိုင်းတစ်ခုပြီးတိုင်း ရောက်သမျှကို Session State ထဲ ချက်ချင်း သိမ်းဆည်းသည်
+            st.session_state.trans_srt = (
+                "\n\n".join(translated_blocks) + "\n\n"
+            )
             chunk_success = True
             time.sleep(2)
             break
@@ -155,17 +160,15 @@ TRANSLATION GUIDELINES:
         time.sleep(3)
 
     if not chunk_success:
-      st.error(
-          f"❌ အပိုင်း ({start_block} မှ {end_block}) ကို ဘာသာပြန်ရာတွင်"
-          " အမှားရှိနေပါသည်။"
+      st.warning(
+          f"⚠️ အပိုင်း ({start_block} မှ {end_block}) တွင် အခက်အခဲရှိသဖြင့်"
+          " ပြီးသမျှ အပိုင်းများကို ဆက်လက် ထိန်းသိမ်းထားပါသည်။"
       )
-      progress_bar.empty()
-      status_placeholder.empty()
-      return None
+      break
 
   progress_bar.empty()
   status_placeholder.empty()
-  return "\n\n".join(translated_blocks) + "\n\n"
+  return st.session_state.trans_srt
 
 
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
@@ -310,7 +313,10 @@ with tab1:
     )
 
 with tab2:
-  st.write("OpenRouter Free မော်ဒယ်ဖြင့် စာတန်းထိုးများကို မြန်မာလို ဘာသာပြန်မည်။")
+  st.write(
+      "OpenRouter Free မော်ဒယ်ဖြင့် စာတန်းထိုးများကို မြန်မာလို ဘာသာပြန်မည်"
+      " (ရောက်သမျှ အပိုင်းကို ချက်ချင်း ဒေါင်းလုဒ်ရယူနိုင်သည်စု)"
+  )
   uploaded_srt = st.file_uploader(
       "SRT ဖိုင် တင်ပါ (.srt)", type=["srt"], key="srt_uploader"
   )
@@ -322,26 +328,26 @@ with tab2:
     else:
       if st.button("🚀 OpenRouter ဖြင့် မြန်မာပြန်ဆိုမည်", key="btn_run_translate"):
         with st.spinner("OpenRouter ဖြင့် ဘာသာပြန်နေပါသည်..."):
-          result = translate_srt_with_openrouter(
+          translate_srt_with_openrouter(
               ACTIVE_OPENROUTER_KEY,
               srt_text,
               model_name=selected_model,
               chunk_size=selected_chunk_size,
           )
-          if result:
-            st.session_state.trans_srt = result
 
+  # ဘာသာပြန်ပြီးသမျှ သို့မဟုတ် ရောက်ရှိနေသမျှကို အချိန်မရွေး ဒေါင်းလုဒ်ရယူနိုင်ရန် ပြသပေးခြင်း
   if st.session_state.trans_srt:
-    st.success("🎉 မြန်မာစာတန်းထိုး အောင်မြင်စွာ ရရှိပါပြီ!")
+    st.success("🎉 မြန်မာစာတန်းထိုး အပိုင်းလိုက် ရရှိနေပါပြီ!")
     st.download_button(
-        "📥 မြန်မာ SRT (.srt) ဒေါင်းလုဒ်",
+        label="📥 လက်ရှိရောက်သမျှ မြန်မာ SRT (.srt) ဒေါင်းလုဒ်",
         data=st.session_state.trans_srt,
-        file_name="burmese_subtitles.srt",
+        file_name="burmese_subtitles_partial.srt",
+        mime="text/plain",
         key="btn_dl_trans_tab2",
     )
     with st.expander("မြန်မာစာတန်းထိုး အစမ်းကြည့်ရှုရန်", expanded=True):
       st.text_area(
-          "Translated Burmese SRT",
+          "Translated Burmese SRT (Live)",
           st.session_state.trans_srt,
           height=250,
           key="preview_trans",
