@@ -72,7 +72,6 @@ def json_to_srt(segments):
   return srt_output
 
 
-# ဘာသာပြန်ပြီးသမျှကို အပိုင်းလိုက် Session State ထဲ ချက်ချင်း သိမ်းဆည်းမည့် Function
 def translate_srt_with_openrouter(
     api_key,
     raw_srt,
@@ -85,6 +84,8 @@ def translate_srt_with_openrouter(
 
   progress_bar = st.progress(0)
   status_placeholder = st.empty()
+  # မျက်နှာပြင်ပေါ်မှာ Live တိုက်ရိုက်ပြပေးမည့် Placeholder
+  live_preview_box = st.empty()
 
   url = "https://openrouter.ai/api/v1/chat/completions"
   headers = {
@@ -145,10 +146,16 @@ TRANSLATION GUIDELINES:
               ]).strip()
 
             translated_blocks.append(translated_chunk)
-            # အပိုင်းတစ်ခုပြီးတိုင်း ရောက်သမျှကို Session State ထဲ ချက်ချင်း သိမ်းဆည်းသည်
-            st.session_state.trans_srt = (
-                "\n\n".join(translated_blocks) + "\n\n"
+
+            # ရောက်သမျှကို Session State နဲ့ Live Box ထဲ ချက်ချင်းထည့်မည်
+            current_so_far = "\n\n".join(translated_blocks) + "\n\n"
+            st.session_state.trans_srt = current_so_far
+            live_preview_box.text_area(
+                "📝 Live Translated Preview (ဘာသာပြန်ပြီးသမျှ)",
+                current_so_far,
+                height=220,
             )
+
             chunk_success = True
             time.sleep(2)
             break
@@ -315,7 +322,7 @@ with tab1:
 with tab2:
   st.write(
       "OpenRouter Free မော်ဒယ်ဖြင့် စာတန်းထိုးများကို မြန်မာလို ဘာသာပြန်မည်"
-      " (ရောက်သမျှ အပိုင်းကို ချက်ချင်း ဒေါင်းလုဒ်ရယူနိုင်သည်စု)"
+      " (ဘာသာပြန်နေစဉ် Live ကြည့်ရှုနိုင်သည်)"
   )
   uploaded_srt = st.file_uploader(
       "SRT ဖိုင် တင်ပါ (.srt)", type=["srt"], key="srt_uploader"
@@ -335,9 +342,9 @@ with tab2:
               chunk_size=selected_chunk_size,
           )
 
-  # ဘာသာပြန်ပြီးသမျှ သို့မဟုတ် ရောက်ရှိနေသမျှကို အချိန်မရွေး ဒေါင်းလုဒ်ရယူနိုင်ရန် ပြသပေးခြင်း
+  # အချိန်မရွေး ဒေါင်းလုဒ်ဆွဲနိုင်သော ခလုတ်
   if st.session_state.trans_srt:
-    st.success("🎉 မြန်မာစာတန်းထိုး အပိုင်းလိုက် ရရှိနေပါပြီ!")
+    st.success("🎉 မြန်မာစာတန်းထိုးများ ရရှိနေပါပြီ!")
     st.download_button(
         label="📥 လက်ရှိရောက်သမျှ မြန်မာ SRT (.srt) ဒေါင်းလုဒ်",
         data=st.session_state.trans_srt,
@@ -345,10 +352,3 @@ with tab2:
         mime="text/plain",
         key="btn_dl_trans_tab2",
     )
-    with st.expander("မြန်မာစာတန်းထိုး အစမ်းကြည့်ရှုရန်", expanded=True):
-      st.text_area(
-          "Translated Burmese SRT (Live)",
-          st.session_state.trans_srt,
-          height=250,
-          key="preview_trans",
-      )
